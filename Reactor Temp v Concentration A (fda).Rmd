@@ -1,0 +1,110 @@
+---
+title: "Reactor Temp v Concentration A"
+author: "Rohan Mishra"
+date: "8/2/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+source("/mnt/fda_CI.R")
+options(scipen=9999)
+options(max.print = 10000000) 
+
+```
+
+### 6 Grid Data
+
+### In this script, we investigate  the correlations on
+```{r 6 grid data, echo = FALSE}
+
+
+### load the data
+data <- "/mnt/DATA/Tin & Tc Variation/forReport19Jul2022_4.csv" %>% read_csv() 
+#data <- "/mnt/DATA/Tin & Tc Variation/fiveRunsallCombosDiffIns.csv" %>% read_csv() 
+
+#datatemp <- data %>% filter(time %in% c(1:50))
+## split the data
+
+data$Replicate <- factor(data$Replicate, levels = unique(data$Replicate))
+data$Tin_group <- str_split_fixed(data$Replicate, fixed("_"), n=3)[,1] %>% factor()
+data$Tc_group <- str_split_fixed(data$Replicate, fixed("_"),n=3)[,2] %>% factor()
+data <- data %>%
+  group_by(Replicate) %>%
+  mutate(time2 = row_number())
+ 
+data <- data %>%                             
+  group_by(Replicate) %>%
+  mutate(time2 = row_number())
+
+data_Tc_sp <- split(data, f=data$Tc_group)
+
+
+### plots, different Tin within plots, different Tc accross plots
+Tcs <- names(data_Tc_sp)
+g <- list()
+for(i in 1:7){
+  g[[i]] <- data_Tc_sp[[i]] %>%
+    ggplot(aes(x=time2,y=concentrationA, col = Tin_group, group = Replicate))+
+    geom_line() +
+    xlim(0,150) +
+    ggtitle(paste("Tc = ", as.character(Tcs[[i]])))
+}
+#grid.arrange(g[[1]],g[[2]],g[[3]],g[[4]],g[[5]], g[[6]],g[[7]])
+
+grid.arrange(g[[2]],g[[3]],g[[4]],g[[5]], g[[6]],g[[7]], ncol=2)
+
+
+g <- lapply(data_Tc_sp,function(i)
+  i %>%
+    ggplot(aes(x=time,y=concentrationA, col = Tin_group, group = Replicate)) + geom_line() + xlim(0,10))
+grid.arrange(g[[1]],g[[2]],g[[3]],g[[4]],g[[5]])
+
+###change x axis for above plots, change 1 to 15 to 1 to 150 (it's a seq(0,15,0.1))
+
+data %>%
+  ggplot(aes(x=time, y=concentrationA,col=as.factor(Tin_group),group=Replicate)) + geom_line() 
+
+
+data %>% group_by(Replicate)
+
+reps <- unique(data$Replicate)
+Tin <- substr(reps, 1,3) %>% as.numeric()
+Tc <- substr(reps, 5,7) %>% as.numeric()
+
+
+#### Create FDA objects for fRegress
+data_con <- data %>%
+  select(time, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+
+data_temp <- data %>%
+  select(time, Temp, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = Temp)
+
+#### create basis
+basis <- create.bspline.basis(rangeval = c(0,25), nbasis = 5)
+
+data_con_fda <- smooth.basis(argvals = 1:25,data_con[1:25,-1] %>% as.matrix(),basis)$fd
+data_temp_fda <- smooth.basis(argvals = 1:25, data_temp[1:25,-1] %>% as.matrix(),basis)$fd
+
+plot(data_con_fda, ylim=c(-0.1,1))
+plot(data_temp_fda, ylim=c(0,600))
+
+c <- cor.fd(1:25,data_con_fda,1:25, data_temp_fda)
+image(c)   ### plots the first column vs the second column
+v <- var.fd(data_con_fda,data_temp_fda)
+v <- var.fd(data_con_fda,data_con_fda)
+
+
+
+
+```

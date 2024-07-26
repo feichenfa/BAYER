@@ -1,0 +1,243 @@
+---
+title: "Simulating the Correlations Matrices"
+author: "Rohan Mishra"
+date: "10/5/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(HMPTrees)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+options(scipen=9999)
+options(max.print = 10000000) 
+
+z_trans <- function(r) 0.5*(log(1+r, base = exp(1))-log(1-r, base = exp(1))) 
+
+```
+
+
+
+```{r load datasets and get other sensors}
+
+dataFei <- read.csv("/mnt/DATA/Fei/cstr_functional_ontology_synethic_08242022.csv") 
+par(mfrow=c(3,2))
+plot(dataFei$concentrationA, type = "l", main = "Concentration of A");grid();#abline(v=seq(0,5000,by=50)); 
+plot(dataFei$Temp, type = "l", main = "Reactor Temperature");grid();#abline(v=seq(0,5000,by=50))
+
+plot(dataFei$coolingTemp, type = "l", main = "Cooling Temperature");grid();#abline(v=seq(0,5000,by=50))
+plot(dataFei$Temp_inlet, type = "l", main = "Inlet Temperature");grid();#abline(v=seq(0,5000,by=50))
+lines(smooth.spline(dataFei$Temp_inlet, spar = 0.2), col = "red", lwd=2)
+
+plot(dataFei$flowRate, type = "l", main = "Flow Rate");grid();#abline(v=seq(0,5000,by=50))
+lines(smooth.spline(dataFei$flowRate, spar = 0.2), col = "red", lwd = 2)
+plot(dataFei$concentrationA_inlet, type = "l", main = "Inlet Concentration of A");grid();#abline(v=seq(0,5000,by=50))
+lines(smooth.spline(dataFei$concentrationA_inlet, spar = 0.2), col = "red", lwd = 2)
+
+
+
+
+dat_corr <- dataFei %>%
+  select(coolingTemp:Temp) %>%
+  cor()
+
+round(dat_corr,3)
+
+
+dat_corr_v <- dat_corr[upper.tri(dat_corr)] 
+round(dat_corr_v,6)
+
+
+
+data_corr_z <- z_trans(dat_corr_v)
+round(data_corr_z,6)
+
+#####
+
+x <- data_corr_z   ### x is a graph!
+sd <- sqrt(1/(5001-3))
+x.mat <- x
+for(i in 2:100){
+  x.mat <- rbind(x.mat, rnorm(15,x,sd=sd)) ### we are generating a new graph in this line
+}                 ### x.mat is a population of graphs sampled from the dist of the first x.mat
+x.mat_MLE <- getMLEandLoglike( t(x.mat))
+x.mat <- rbind(x.mat, x.mat_MLE$mleTree %>% t())
+
+View(round(x.mat,3))
+
+
+d <- dist(x.mat)
+d_mds <- cmdscale(d)
+
+par(mfrow=c(1,1))
+plot(d_mds, xlim=c(-.1,.1), ylim=c(-.1,.1)); grid(lwd=2); title("MDS of first 100 graphs & G-Star")
+text(x=0.05,y=0.055,paste("Tau",x.mat_MLE$tau, sep = "="))
+points(d_mds[101,1],d_mds[101,2], pch=16,cex=2, col = "red")
+
+
+for(i in 2:50){
+  x.mat <- rbind(x.mat, rnorm(15,x,sd=10*sd))
+}
+x.mat_MLE <- getMLEandLoglike( t(x.mat))
+
+x.mat <- rbind(x.mat, x.mat_MLE$mleTree %>% t())
+
+d <- dist(x.mat)
+d_mds <- cmdscale(d)
+
+plot(d_mds)
+plot(d_mds, xlim=c(-.75,.75), ylim=c(-.75,.75)); grid(lwd=2); title("MDS 150 Graphs & Different G-Stars")
+text(x=0.5,y=0.55,paste("Tau",x.mat_MLE$tau, sep = "="))
+points(d_mds[101,1],d_mds[101,2], pch=16,cex=2, col = "red")
+points(d_mds[151,1],d_mds[151,2], pch=16,cex=1, col = "blue")
+points(d_mds[102:150,1],d_mds[102:150,2], pch=16,cex=1, col = "light blue")
+
+
+for(i in 2:500){
+  x.mat <- rbind(x.mat, rnorm(15,x+0.25,sd=sd))
+}
+x.mat_MLE <- getMLEandLoglike( t(x.mat))
+
+x.mat <- rbind(x.mat, x.mat_MLE$mleTree %>% t())
+
+d <- dist(x.mat)
+d_mds <- cmdscale(d)
+
+plot(d_mds)
+plot(d_mds, xlim=c(-.75,.75), ylim=c(-.75,.75)); grid(lwd=2); title("MDS 250 Graphs & Different G-Stars")
+text(x=0.5,y=0.55,paste("Tau",x.mat_MLE$tau, sep = "="))
+points(d_mds[101,1],d_mds[101,2], pch=16,cex=2, col = "red")
+points(d_mds[151,1],d_mds[151,2], pch=16,cex=1, col = "blue")
+points(d_mds[751,1],d_mds[751,2], pch=16,cex=2, col = "green")
+points(d_mds[152:250,1],d_mds[152:250,2], pch=16,cex=1, col = "light green")
+
+
+
+
+# #plot(d_mds)
+# plot(d_mds, xlim=c(-.45,.45), ylim=c(-.45,.45)); grid(lwd=2); title("MDS of first 100 graphs & G-Star")
+# #text("Tau = 13") # paste & position later
+# points(d_mds[101,1],d_mds[101,2], pch=16,cex=2, col = "red")
+# #points(d_mds[112,1],d_mds[112,2], pch=16,cex=1, col = "blue")
+# points(d_mds[174,1],d_mds[174,2], pch=16,cex=2, col = "blue")
+# points(d_mds[102:111,1], d_mds[102:111,2], pch=16, cex=1.5,col = "green")
+
+
+# points(d_mds[111,1],d_mds[111,2], pch=16,cex=2, col = "blue")
+# points(d_mds[111,1],d_mds[111,2], pch=16,cex=2, col = "blue")
+# points(d_mds[111,1],d_mds[111,2], pch=16,cex=2, col = "blue")
+
+
+
+
+
+```
+
+```{r moving correlation}
+
+par(mfrow=c(3,2))
+plot(dataFei$concentrationA, type = "l", main = "Concentration of A");grid();abline(v=seq(0,5000,by=50)); 
+plot(dataFei$Temp, type = "l", main = "Reactor Temperature");grid();abline(v=seq(0,5000,by=50))
+
+plot(dataFei$coolingTemp, type = "l", main = "Cooling Temperature");grid();abline(v=seq(0,5000,by=50))
+plot(dataFei$Temp_inlet, type = "l", main = "Inlet Temperature");grid();abline(v=seq(0,5000,by=50))
+lines(smooth.spline(dataFei$Temp_inlet, spar = 0.2), col = "red", lwd=2)
+
+plot(dataFei$flowRate, type = "l", main = "Flow Rate");grid();abline(v=seq(0,5000,by=50))
+lines(smooth.spline(dataFei$flowRate, spar = 0.2), col = "red", lwd = 2)
+plot(dataFei$concentrationA_inlet, type = "l", main = "Inlet Concentration of A");grid();abline(v=seq(0,5000,by=50))
+lines(smooth.spline(dataFei$concentrationA_inlet, spar = 0.2), col = "red", lwd = 2)
+
+
+
+z <- dataFei
+z$coolingTemp <- z$coolingTemp + runif(5001,-10,10)
+z$Group <- cut(1:5001,100,labels = FALSE)
+
+z1 <- split(z, f=z$Group)
+#i <- z1[[1]]
+
+z_c <- lapply(z1, function(i){
+  d2 <- i %>%
+    select(coolingTemp:Temp) %>%
+    cor()
+  d2 <- d2[upper.tri(d2)]
+  return(d2)
+}) %>%
+  bind_rows() %>% t()
+
+par(mfrow=c(1,1))
+z_d <- dist(z_c)
+zz <- cmdscale(z_d,k=2)
+plot(zz, xlim=c(-1,1),ylim=c(-1,1));grid(lwd=2)
+#points(zz[80:90,1],zz[80:90,2], col = "red", pch=16)
+#points(zz[90:100,1],zz[90:100,2], col = "red", pch=16)
+points(zz[60:90,1],zz[60:90,2], col = "red", pch=16)
+
+g_all <- getMLEandLoglike(t(z_c))
+g_red <- getMLEandLoglike(t(z_c[60:90,]))
+g_white <- getMLEandLoglike(t(z_c[-c(60:90),]))
+
+z_c <- rbind(z_c,
+             g_all$mleTree %>% t(),
+             g_red$mleTree %>% t(),
+             g_white$mleTree %>% t())
+
+z_d <- dist(z_c)
+zz <- cmdscale(z_d,k=2)
+plot(zz[,1],zz[,2], xlim=c(-1,1),ylim=c(-1,1), type = "n");grid(lwd=2)
+text(zz[,1],zz[,2], labels = as.character(1:100), cex = 0.75)
+#points(zz[80:90,1],zz[80:90,2], col = "red", pch=16)
+#points(zz[90:100,1],zz[90:100,2], col = "red", pch=16)
+#points(zz[60:90,1],zz[60:90,2], col = "red", pch=16)
+points(zz[101,1],zz[101,2], col = "blue", pch=16, cex = 2)
+points(zz[102,1],zz[102,2], col = "blue", pch=16, cex = 2)
+points(zz[103,1],zz[103,2], col = "blue", pch=16, cex = 2)
+ 
+Gs <- data.frame(g_all$mleTree,
+                 g_white$mleTree,
+                 g_red$mleTree) %>% round(3)
+colnames(Gs) <- c("All", "Normal", "Abnormal")
+Gs
+
+# for ( i in 1:50){
+#   d <- dataFei[1*i:i+50,]
+#   d2 <- cor(d)
+#   d2 <- d2[upper.tri(d2)]
+#   
+# }
+
+
+```
+
+
+
+
+
+```{r other code}
+
+data_con <- read_rds("/mnt/DATA/for_fPCA.rds")
+
+dataFei2 <- dataFei %>%
+  filter(Replicate %in% colnames(data_con)) %>%
+  select()
+
+dataFei2$Replicate <- dataFei2$Replicate %>% as.character() %>% as.factor()
+
+
+
+dataFeiCorrs <- dataFei2 %>%
+  split(f=dataFei2$Replicate) %>%
+  lapply(function(i) cor(i[,-8]))
+
+
+
+```
+

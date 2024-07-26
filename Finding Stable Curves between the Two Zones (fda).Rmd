@@ -1,0 +1,264 @@
+---
+title: "Finding Stable Curves between the Two Zones"
+author: "Rohan Mishra"
+date: "8/5/2022"
+output:
+  html_document: default
+  word_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+source("/mnt/fda_CI.R")
+options(scipen=9999)
+options(max.print = 10000000) 
+```
+
+
+When investigating combinations of Tc & Tin that give us stable curves in Concentration of A, we anticipated a linear effect in these curves. As overall temperature goes up, the concentration should be stable, and converge to a specific Concentration of A. Plot 1 below shows an example.
+
+
+```{r Regression with Linear Effect, echo = FALSE, fig.cap="Plot 1"}
+
+data <- "/mnt/DATA/Tin & Tc Variation/Tc200to500Tin200to500_by5.csv" %>% read.csv()
+data$Replicate <- factor(data$Replicate, levels = unique(data$Replicate))
+data$Tin_group <- str_split_fixed(data$Replicate, fixed("_"), n=3)[,1] #%>% str_sub(2,-2) 
+data$Tc_group <- str_split_fixed(data$Replicate, fixed("_"),n=3)[,2] #%>% str_sub(2,-2) 
+ 
+
+#Tc2 <- (Tc-mean(Tc))/sqrt(var(Tc))
+data <- data %>%                             
+  group_by(Replicate) %>%
+  mutate(time2 = row_number())
+
+s <- seq(200,500, by = 25) #%>% as.character()
+
+data <- data %>%
+  filter(coolingTemp %in% s & Temp_inlet %in% s) 
+
+
+
+data_con <- data %>%
+  select(time, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+reps <- unique(data$Replicate)
+Tin <- str_split_fixed(reps, fixed("_"),3)[,1] %>% as.numeric() #%>% round(0) %>% as.factor()
+#Tc <- unique(data$Tc_group) %>% as.numeric() #%>% round(0) %>% as.factor()
+
+#Tin_Tc <- (unique(data$Tin_group) %>% as.numeric) * (unique(data$Tc_group) %>% as.numeric()) %>% round(0)
+#Tin_Tc <- Tin * Tc2
+
+
+#Tin_Tc <- as.factor(Tin_Tc)
+
+#### create basis
+basis <- create.bspline.basis(rangeval = c(0,150), nbasis = 50)
+
+data_con_fda <- smooth.basis(argvals = 1:150,data_con[1:150,-1] %>% as.matrix(),basis)$fd
+
+#plot(data_con_fda)
+
+
+#f_Interaction <- fRegress(data_con_fda ~ as.factor(Tin) + as.factor(Tc) )
+
+#f_Interaction <- fRegress(data_con_fda ~ Tin + Tc2 + Tin_Tc)
+f_Interaction <- fRegress(data_con_fda ~ Tin )
+
+
+
+
+
+# par(mfrow=c(2,2))
+# plot(f_Interaction$betaestlist$const, xlim = c(0,150)); title(main="B0")
+# plot(f_Interaction$betaestlist$Tin, xlim = c(0,150)); title(main="B1")
+# 
+# plot(f_Interaction$betaestlist$Tc, xlim=c(0,150)); title(main="B2")
+plot(f_Interaction$yhatfdobj, xlim = c(0,150), ylim=c(0,0.9)); title(main="Yhat")
+# plot(f_Interaction$betaestlist$Tin_Tc, xlim = c(0,150)); title(main="B3")
+
+
+
+
+```
+
+However, when looking at the raw data from simulations, a very different set of Concentration curves emerge, as shown on Plot 2. 
+
+```{r Actual Data Representation, echo = FALSE, fig.cap="Plot 2"}
+
+data %>%
+  filter(time2 <= 150) %>% 
+  ggplot(aes(x=time2, y = concentrationA, color=as.factor(Tin_group), group = Replicate)) + 
+  geom_line() + theme(legend.position = "none") 
+  #xlim(0,150) %>%
+  #suppressWarnings()## add title
+
+
+```
+
+
+
+
+```{r Actual Func Data Representation, include = FALSE}
+
+
+plot(data_con_fda, ylim=c(0,0.8))
+
+```
+
+
+Looking at the raw data, we see a pattern at time 150: stable curves converge into 2 specific concentration values: 0.8 and 0.05. 
+
+When we plot each of the Final Concentration_A values for each simulation, we find a bimodal pattern around 0.05 and 0.8. There are very few simulations ending around 0.3 to 0.65. A histogram of Final Concentration values confirms this pattern.
+
+
+
+```{r Final Con Plot,echo=FALSE, fig.cap="PLOT 1: Plot of Final Con A by Simulation"}
+
+
+
+mat <-  data %>%
+  group_by(Temp_inlet, coolingTemp) %>%
+  summarise(Final_ConA = last(concentrationA)) 
+
+hist(mat$Final_ConA)
+#plot(1:169, mat$Final_ConA,ylim=c(0,0.8))
+
+
+mat %>%
+  ggplot(aes(x=1:169, y = Final_ConA)) + geom_point() + ylim(0,0.8)
+
+```
+
+### Matrix Images
+
+An image of a matrix X creates a grid of colored rectangles with colors corresponding to the values in X. Plot 2 shows an image of the matrix. The rownames of this matrix corresponds to Inlet Temperature, and the colnames correspond to Cooling Temperature. We can see a similar pattern emerge in this image as seen in Plot 1. 
+
+```{r images of Final Concentration, include=FALSE, fig.cap="PLOT 2: an image of Final Con A shows a similar pattern to Plot 1"}
+m <- mat %>%
+  pivot_wider(names_from = coolingTemp, values_from = Final_ConA) %>%
+  column_to_rownames(var="Temp_inlet") %>%
+  as.matrix()
+
+image(m)
+
+mat_sub <- mat %>%
+  filter(between(Final_ConA, 0.1,0.7))
+
+#table(mat_sub$Temp_inlet, mat_sub$coolingTemp)
+
+m_sub <- mat %>%
+  filter(between(Final_ConA, 0.1,0.7)) %>% #apply(2,summary)
+  pivot_wider(names_from = coolingTemp, values_from = Final_ConA) %>%
+  column_to_rownames(var="Temp_inlet") %>%
+  as.matrix()
+
+#image(m_sub)
+
+
+```
+
+
+### Full Simulations
+
+When looking at full simulations, a pattern emerges: Simulations with final values at either of the bimodal peaks has a stable concentration of A, while those in between the peaks have unstable concentrations of A. 
+
+Let Cooling Temperature be 340K, and have Inlet Temperature be one of: 260K, 300K, and 340K. The pattern described above can be clearly seen.
+
+
+
+```{r Plot of Simulations Tc is fixed, echo = FALSE, fig.cap="PLOT 3: Simulations either converge close to 0.8, 0, or are unstable and never truly converge"}
+
+d1 <- data %>% 
+  filter(coolingTemp == 200 & Temp_inlet==250 & time2 <= 200) %>%
+  ggplot(aes(x=time, y=concentrationA)) + geom_line() + ggtitle("Tc = 200, Tin = 250")
+
+d2 <- data %>% 
+  filter(coolingTemp == 200 & Temp_inlet==275 & time2 <= 200) %>%
+  ggplot(aes(x=time, y=concentrationA)) + geom_line() + ggtitle("Tc = 200, Tin = 275")
+
+d3 <- data %>% 
+  filter(coolingTemp == 200 & Temp_inlet==300 & time2 <= 200) %>%
+  ggplot(aes(x=time, y=concentrationA)) + geom_line() + ggtitle("Tc = 200, Tin = 300")
+
+grid.arrange(d1,d2,d3)
+
+# data %>% 
+#   filter(coolingTemp == 325 & Temp_inlet %in% c(250:350) & time2 <= 200) %>%
+#   ggplot(aes(x=time, y=Temp, color=as.factor(Tin_group), group = Replicate)) + geom_line() 
+
+
+
+```
+
+
+### Fei's Ranges
+
+
+When we zoom back into Fei's original ranges and recreating Plot 1, we see that all Final Concentrations converge very near 0.8.
+
+```{r Fei Ranges, echo = FALSE, fig.cap="PLOT 4: All Final Concentration A Values Converge to 0.8"}
+
+dataFei <- "/mnt/DATA/Tin & Tc Variation/FeisRanges180runs26Jul2022.csv" %>% read.csv()
+dataFei$Replicate <- factor(dataFei$Replicate, levels = unique(dataFei$Replicate))
+dataFei$Tin_group <- str_split_fixed(dataFei$Replicate, fixed("_"), n=3)[,1] %>% str_sub(2,-2) 
+dataFei$Tc_group <- str_split_fixed(dataFei$Replicate, fixed("_"),n=3)[,2] %>% str_sub(2,-2) 
+ 
+
+#Tc2 <- (Tc-mean(Tc))/sqrt(var(Tc))
+dataFei <- dataFei %>%                             
+  group_by(Replicate) %>%
+  mutate(time2 = row_number())
+
+dataFei %>%
+  filter(time2<150) %>%
+  ggplot(aes(x=time2,y=concentrationA, color=Tc_group, group=Replicate)) +
+  geom_line() + 
+  theme(legend.position = "none") + ggtitle("Concentration A with Tc in [250,300] & Tin in [300,350] by 10")
+
+
+matFei <-  dataFei %>%
+  group_by(Temp_inlet, coolingTemp) %>%
+  summarise(Final_ConA = last(concentrationA)) 
+
+# par(mfrow=c(2,1))
+# plot(1:180, matFei$Final_ConA, ylim=c(0,0.8), main = "Fei's Ranges- No Second Stage Noise")
+
+m1 <- matFei %>%
+  ggplot(aes(x=1:180,y=Final_ConA)) + 
+  geom_point() + 
+  ggtitle("Fei's Ranges Final Con A without 2nd Stage Noise") + ylim(0,0.9)
+
+hist(matFei$Final_ConA,xlim=c(0,1))
+### must go back to Python to add noise back to this
+dataFeiNoise <- "/mnt/DATA/Tin & Tc Variation/FeisRanges180runsWithAllNoise_9Aug2022.csv" %>% read.csv()
+
+matFeiNoise <-  dataFeiNoise %>%
+  group_by(Replicate) %>%
+  summarise(Final_ConA = last(concentrationA)) 
+
+m2 <- matFeiNoise %>%
+  ggplot(aes(x=1:180,y=Final_ConA)) + 
+  geom_point() + 
+  ggtitle("Fei's Ranges Final Con A with 2nd Stage Noise") + ylim(0,0.9)
+
+hist(matFeiNoise$Final_ConA,xlim=c(0,1))
+
+
+#grid.arrange(m1,m2, nrow=2)
+
+# plot(1:180, matFeiNoise$Final_ConA, ylim=c(0,0.8), main = "Fei's Ranges With Second Stage Noise")
+
+```
+
+
+
+

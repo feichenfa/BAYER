@@ -1,0 +1,255 @@
+---
+title: "fRegress in Fei Solution Space"
+author: "Rohan Mishra"
+date: "8/15/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+source("/mnt/fda_CI.R")
+options(scipen=9999)
+options(max.print = 10000000) 
+
+```
+
+
+
+```{r load data}
+
+dataFei <- "/mnt/DATA/Tin & Tc Variation/Tc250to300_Tin300to350_Unif_dist_16Aug2022.csv" %>% read.csv()
+dataFei$Replicate <- factor(dataFei$Replicate, levels = unique(dataFei$Replicate))
+dataFei <- dataFei %>%
+  group_by(Replicate) %>%
+  mutate(time2=row_number(),
+         Tin_group=plyr::round_any(Temp_inlet,10),
+         Tc_group=plyr::round_any(coolingTemp,10))
+
+
+
+d <- dataFei %>%
+  group_by(Replicate) %>% summarise(min=min(concentrationA)) %>% filter(min >= 0.2) %>% arrange(min)
+x <- d$min
+
+d_samp <- d %>%
+  sample_n( size=50)
+
+
+dataFei %>%
+  filter(time2<=150) %>%
+  #filter(Replicate %in% d$Replicate) %>%
+  ggplot(aes(x=time2, y=concentrationA, color=Replicate, group=Replicate)) + geom_line() + theme(legend.position="none") #+ scale_y_continuous(trans="log10")
+
+
+#dataFei2 <- dataFei %>% filter(Replicate %in% d$Replicate)
+
+#d2 <- dataFei %>% filter(Replicate == "[307.58274342]_[268.74844973]_100_1")
+
+data_con <- dataFei %>%
+  select(time2, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+basis <- create.bspline.basis(rangeval = c(0,150), nbasis = 50)
+
+data_con_fda <- smooth.basis(argvals = 1:150,data_con[1:150,-1] %>% as.matrix(),basis)$fd
+
+plot(data_con_fda)
+
+Tin <- dataFei %>%
+  group_by(Replicate) %>%
+  distinct(Temp_inlet)
+Tin <- Tin$Temp_inlet %>% as.vector() #%>% as.factor()
+
+Tc <- dataFei %>%
+  group_by(Replicate) %>%
+  distinct(coolingTemp) 
+Tc <- Tc$coolingTemp %>% as.vector()
+
+Tin_Tc <- Tin * Tc
+
+fReg <- fRegress(data_con_fda ~ Tin)
+plot(fReg$yhatfdobj)
+plot(fReg$betaestlist$const)
+plot(fReg$betaestlist$Tin)
+
+
+
+fReg <- fRegress(data_con_fda ~ Tin + Tin^2 + Tin^3 )
+plot(fReg$yhatfdobj)
+
+#plotting y & yhat & difference
+plot(d2$time2, d2$concentrationA, type="l",xlim=c(0,150))
+plot(fReg$yhatfdobj$fd$coefs[,1], type="l")
+
+
+#replicates:
+#[323.50944342]_[292.16111041]_100_261 - 0.3624755
+#[317.46937376]_[291.73467004]_100_268 - 0.5806581
+#[305.10856826]_[251.41599702]_100_432 - 0.7380179
+
+
+```
+
+```{r Raw Yhat and Diff}
+
+fReg <- fRegress(data_con_fda ~ Tin)
+plot(fReg$yhatfdobj)
+d3 <- dataFei %>% filter(time2<= 150 & Replicate == "[305.10856826]_[251.41599702]_100_432")
+d2 <- dataFei %>% filter(time2<= 150 & Replicate == "[317.46937376]_[291.73467004]_100_268")
+d1 <- dataFei %>% filter(time2<= 150 & Replicate == "[323.50944342]_[292.16111041]_100_261")
+
+
+coefs.df <- data.frame(time = 1:150,
+                       High=d3$concentrationA,
+                       Med=d2$concentrationA,
+                       Low=d1$concentrationA,
+                       B0 = eval.fd(1:150,fReg$betaestlist$const$fd),
+                       B1 = eval.fd(1:150,fReg$betaestlist$Tin$fd)
+                       ) %>%
+  mutate(HighHat = B0 + B1*305.10856826,
+         MedHat = B0+B1*317.46937376,
+         LowHat = B0+B1*323.50944342) %>%
+  mutate(HighDiff = High - HighHat,
+         MedDiff = Med - MedHat,
+         LowDiff = Low - LowHat)
+
+par(mfrow=c(3,3))
+plot(coefs.df$time, coefs.df$High, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$HighHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$HighDiff, type = "l",main="Diff");grid()
+
+plot(coefs.df$time, coefs.df$Med, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$MedHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$MedDiff, type = "l",main="Diff");grid()
+
+plot(coefs.df$time, coefs.df$Low, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$LowHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$LowDiff, type = "l",main="Diff");grid()
+
+
+par(mfrow=c(1,2))
+plot(coefs.df$time, coefs.df$High, type = "l",main="Raw & Yhat",ylim=c(0.68,0.81),xlab = "Time",ylab="ConcentrationA");grid()
+lines(coefs.df$time, coefs.df$HighHat, col = "red")
+plot(coefs.df$time, coefs.df$HighDiff, type = "l",main="Residual",xlab = "Time",ylab="Residual");grid();abline(h=0)
+
+par(mfrow=c(1,2))
+plot(coefs.df$time, coefs.df$Low, type = "l",main="Raw & Yhat", xlab = "Time",ylab="ConcentrationA");grid()
+lines(coefs.df$time, coefs.df$LowHat, col = "red")
+plot(coefs.df$time, coefs.df$LowDiff, type = "l",main="Residual",xlab = "Time",ylab="Residual");grid();abline(h=0)
+
+```
+
+
+```{r Tin squared added to model}
+Tin_sq <- Tin*Tin 
+Tin2 <- (Tin-mean(Tin))/(sd(Tin))
+Tin2_sq <- Tin * Tin
+Tin2_sq <- (Tin2_sq-mean(Tin2_sq))/(sd(Tin2_sq))
+fReg <- fRegress(data_con_fda ~ Tin2 + Tin2_sq)
+
+(323.50944342-mean(Tin))/sd(Tin)
+
+
+
+
+d1 <- dataFei %>% filter(time2<= 150 & Replicate == "[323.50944342]_[292.16111041]_100_261")
+d2 <- dataFei %>% filter(time2<= 150 & Replicate == "[317.46937376]_[291.73467004]_100_268")
+d3 <- dataFei %>% filter(time2<= 150 & Replicate == "[305.10856826]_[251.41599702]_100_432")
+
+
+  
+  
+coefs.df <- data.frame(time = 1:150,
+                       High=d3$concentrationA,
+                       Med=d2$concentrationA,
+                       Low=d1$concentrationA,
+                       B0 = eval.fd(1:150,fReg$betaestlist$const$fd),
+                       B1 = eval.fd(1:150,fReg$betaestlist$Tin$fd)) %>%
+  mutate(HighHat = B0 + B1*-0.000943072,
+         MedHat = B0+B1*-0.4183713,
+         LowHat = B0+B1*-1.272625) %>%
+  mutate(HighDiff = High - HighHat,
+         MedDiff = Med - MedHat,
+         LowDiff = Low - LowHat)
+
+par(mfrow=c(3,3))
+plot(coefs.df$time, coefs.df$High, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$HighHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$HighDiff, type = "l",main="Diff");grid()
+
+plot(coefs.df$time, coefs.df$Med, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$MedHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$MedDiff, type = "l",main="Diff");grid()
+
+plot(coefs.df$time, coefs.df$Low, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$LowHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$LowDiff, type = "l",main="Diff");grid()
+
+
+par(mfrow=c(1,2))
+plot(coefs.df$time, coefs.df$High, type = "l",main="Raw & Yhat", ylim=c(0.675,.8),xlab = "Time",ylab="ConcentrationA");grid()
+lines(coefs.df$time, coefs.df$HighHat, col = "red")
+plot(coefs.df$time, coefs.df$HighDiff, type = "l",main="Residual",ylim=c(-0.01,0.07),xlab = "Time",ylab="Residual");grid();abline(h=0)
+
+
+```
+
+```{r Tc added to model}
+
+fReg <- fRegress(data_con_fda ~ Tin + Tc)
+plot(fReg$yhatfdobj)
+
+d3 <- dataFei %>% filter(time2<= 150 & Replicate == "[305.10856826]_[251.41599702]_100_432")
+d2 <- dataFei %>% filter(time2<= 150 & Replicate == "[317.46937376]_[291.73467004]_100_268")
+d1 <- dataFei %>% filter(time2<= 150 & Replicate == "[323.50944342]_[292.16111041]_100_261")
+
+
+coefs.df <- data.frame(time = 1:150,
+                       High=d3$concentrationA,
+                       Med=d2$concentrationA,
+                       Low=d1$concentrationA,
+                       B0 = eval.fd(1:150,fReg$betaestlist$const$fd),
+                       B1 = eval.fd(1:150,fReg$betaestlist$Tin$fd),
+                       B2 = eval.fd(1:150,fReg$betaestlist$Tc$fd)
+                       ) %>%
+  mutate(HighHat = B0 + B1*305.10856826 + B2*251.41599702,
+         MedHat = B0+B1*317.46937376 + B2*291.73467004,
+         LowHat = B0+B1*323.50944342 + B2*292.16111041) %>%
+  mutate(HighDiff = High - HighHat,
+         MedDiff = Med - MedHat,
+         LowDiff = Low - LowHat)
+
+par(mfrow=c(3,3))
+plot(coefs.df$time, coefs.df$High, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$HighHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$HighDiff, type = "l",main="Diff");grid()
+
+plot(coefs.df$time, coefs.df$Med, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$MedHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$MedDiff, type = "l",main="Diff");grid()
+
+plot(coefs.df$time, coefs.df$Low, type = "l",main="Raw");grid()
+plot(coefs.df$time, coefs.df$LowHat, type = "l",main="Yhat");grid()
+plot(coefs.df$time, coefs.df$LowDiff, type = "l",main="Diff");grid()
+
+
+par(mfrow=c(1,2))
+plot(coefs.df$time, coefs.df$High, type = "l",main="Raw & Yhat",ylim=c(0.73,0.81),xlab = "Time",ylab="ConcentrationA");grid()
+lines(coefs.df$time, coefs.df$HighHat, col = "red")
+plot(coefs.df$time, coefs.df$HighDiff, type = "l",main="Residual",xlab = "Time",ylab="Residual");grid();abline(h=0)
+
+par(mfrow=c(1,2))
+plot(coefs.df$time, coefs.df$Low, type = "l",main="Raw & Yhat", xlab = "Time",ylab="ConcentrationA");grid()
+lines(coefs.df$time, coefs.df$LowHat, col = "red")
+plot(coefs.df$time, coefs.df$LowDiff, type = "l",main="Residual",xlab = "Time",ylab="Residual");grid();abline(h=0)
+
+
+
+```

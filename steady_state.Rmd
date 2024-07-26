@@ -1,0 +1,154 @@
+---
+title: 'First Order Reaction: Steady State'
+author: "William D. Shannon, PhD, MBA"
+date: "5/22/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(deSolve)
+```
+
+## First Simulation
+
+This report discusses a simple steady state first order chemical reaction ODE $$\frac{dC}{dt}=-k \times C$$ where $C$ is the concentration and $k$ is the reaction rate.  The plot shows how concentration declines for various values of $k$ with increasing values of $k$ driving the reaction faster.
+
+```{r ODE1}
+SIR <- function(time,state,parameters) {
+  with(as.list(c(state,parameters)),
+       {
+         dCdt = -k * C
+         return(list(c(dCdt))) 
+       })}
+
+state <- c(C=1) #initial conditions for odes
+time <-seq(from = 0, to = 1000, length.out = 1001)
+result = NULL
+for(k in c(0.001, 0.01, 0.1)) {
+  out.test = ode(y=state, times=time,
+              func=SIR, parms=c(k = k))
+  result = rbind(result, cbind(k=k, out.test))
+}
+
+result.df = as.data.frame(result)
+result.df$k = as.factor(result.df$k)
+ggplot(result.df, aes(x=time, y=C, group=k, color=k)) +
+  geom_line() +
+  ggtitle('First Order Reaction, Steady State') +
+  ylab('Concentration') +
+  xlab('Time')
+
+```
+
+Reaction rates $k$ for a compound are dependent on temperature modeled by the *Arrhenius equation* $$k = Ae^{\frac{-E}{RT}}$$ where $A$ is the frequency of molecular collisions, $E$ is the activation energy, $R$ is the ideal gas constant (8.314 joules per kelvin per mole), and $T$ is the absolute temperature (see https://www.britannica.com/science/Arrhenius-equation).
+
+Fei's initial simulation set the following values: $$A = 7.2e^{10}$$ $$E = 72751.96$$ $$R = 8.31451$$ $$T = 400$$ For these plots I lowered the temperature to produce visible concentration reduction in the first 500 time units.
+
+Increasing temperature speeds up the reaction.
+
+
+```{r ODE2}
+A = 7.2e10
+E = 72751.96
+R = 8.31451
+T = 400
+
+k.arrhenius = function(A, E, R, T) {A*exp(1)^(-E/(R*T))}
+
+state <- c(C=1) #initial conditions for odes
+time <-seq(from = 0, to = 500, length.out = 501)
+result = NULL
+for(T in c(275, 300, 325)) {
+  k = k.arrhenius(A,E,R,T)
+  out.test = ode(y=state, times=time,
+              func=SIR, parms=c(k = k))
+  result = rbind(result, cbind(k=k, Temp=T, out.test))
+}
+
+result.df = as.data.frame(result)
+result.df$Temp = as.factor(result.df$Temp)
+ggplot(result.df, aes(x=time, y=C, group=Temp, color=Temp)) +
+  geom_line() +
+  ggtitle('First Order Reaction, Steady State') +
+  ylab('Concentration') +
+  xlab('Time')
+```
+
+The temperature --> reaction rate $k$ conversion for the above plot is:
+```{r kCalc}
+print(cbind(Temp=c(275, 300, 325),
+            k = c(k.arrhenius(A,E,R,275),
+                  k.arrhenius(A,E,R,300),
+                  k.arrhenius(A,E,R,325))))
+```
+
+
+## Simulated data
+
+I have identified two sources of noise to $\frac{dC}{dt}$ to consider in the simulations.
+
+First is variation in temperature. While the temp might be set to a value, say $T = 300$, it will vary from run to run. Adding a $N(0, \sigma)$ random variate to temperature produces variability in the concentration reduction curves.
+
+
+
+```{r ODE.noise}
+result = NULL
+for(T in round(300 + rnorm(10, 0, 2.5), 4)) {
+  k = k.arrhenius(A,E,R,T)
+  out.test = ode(y=state, times=time,
+              func=SIR, parms=c(k = k))
+  result = rbind(result, cbind(k=k, Temp=T, out.test))
+}
+
+result.df = as.data.frame(result)
+result.df$Temp = as.factor(result.df$Temp)
+ggplot(result.df, aes(x=time, y=C, group=Temp, color=Temp)) +
+  geom_line() +
+  ggtitle('Varying Temperature') +
+  ylab('Concentration') +
+  xlab('Time')
+```
+
+Second is variation in the number of molecular collisions at each time point. Theoretically $k$ indicates the amount of chemical degraded at each time point, but in reality there will be variation about this value.  To add this noise a uniform random number is added to the ODE: $$\frac{dC}{dt}=(-k + U(-\epsilon, \epsilon)) \times C$$
+
+We will need to refine this to ensure the concentration does not increase or fall below 0.
+
+```{r ODE.noise2}
+
+SIR.noise <- function(time,state,parameters) {
+  with(as.list(c(state,parameters)),
+       {
+         dCdt = (-k + runif(1, -5e-5, 5e-5)) * C
+         return(list(c(dCdt))) 
+       })}
+
+result = NULL
+for(T in round(300 + rnorm(10, 0, 2.5), 4)) {
+  k = k.arrhenius(A,E,R,T)
+  out.test = ode(y=state, times=time,
+              func=SIR.noise, parms=c(k = k))
+  result = rbind(result, cbind(k=k, Temp=T, out.test))
+}
+
+result.df = as.data.frame(result)
+result.df$Temp = as.factor(result.df$Temp)
+ggplot(result.df, aes(x=time, y=C, group=Temp, color=Temp)) +
+  geom_line() +
+  ggtitle('Varying Temp. and Collision Rate') +
+  ylab('Concentration') +
+  xlab('Time')
+
+```
+
+## Next steps
+
+This simulation will let us generate initial FDA and DAG results for 
+
+* Simulator: Material flow/sensor measurement simulation
+* Root Cause Analysis
+* Anomaly detection
+* Intervention Analysis
+
+More complex ODEs will be developed and run in R using the **DeSolve** package.

@@ -1,0 +1,239 @@
+---
+title: "Regression Write-Up"
+author: "Rohan Mishra"
+date: "`r Sys.Date()`"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+source("/mnt/fda_CI.R")
+options(scipen=9999)
+options(max.print = 10000000) 
+
+```
+
+
+To better understand the power of functional regression, we will be pulling out a subset of the data to turn into fd objects. We will be taking data from timepoints 10 to 150, as shown in the plot below.
+
+
+```{r load data, echo = FALSE}
+
+dataFei <- "/mnt/DATA/Tin & Tc Variation/Tc250to300_Tin300to350_Unif_dist_16Aug2022.csv" %>% read.csv()
+dataFei$Replicate <- factor(dataFei$Replicate, levels = unique(dataFei$Replicate))
+dataFei <- dataFei %>%
+  group_by(Replicate) %>%
+  mutate(time2=row_number(),
+         Tin_group=plyr::round_any(Temp_inlet,10),
+         Tc_group=plyr::round_any(coolingTemp,10))
+
+d1 <- dataFei %>%
+  #filter(time2<=150) %>%
+  #filter(Replicate %in% d$Replicate) %>%
+  filter(Temp_inlet == 300.4618)
+  ggplot(aes(x=time2, y=concentrationA, color=Temp_inlet, group=Temp_inlet)) + 
+  geom_line() + 
+  theme(legend.position="none") + 
+  geom_vline(xintercept = 10) +
+  geom_vline(xintercept = 150) +
+  #geom_vline(xintercept = 10) + 
+  ggtitle("Full Data")#+ 
+
+d2 <- dataFei %>%
+  filter(time2<=150 ) %>%
+  #filter(Replicate %in% d$Replicate) %>%
+  filter(Temp_inlet == median(dataFei$Temp_inlet)) %>%
+  ggplot(aes(x=time2, y=concentrationA, color=Temp_inlet, group=Temp_inlet)) + 
+  geom_line() + 
+  theme(legend.position="none") + 
+  geom_vline(xintercept = 10) + 
+  geom_vline(xintercept = 150) +
+  ggtitle("Data to Turn to FD Objects")#+ scale_y_continuous(trans="log10")
+
+grid.arrange(d1,d2)
+
+```
+
+The functional representation is plotted below.
+
+```{r fd, echo=FALSE}
+
+par(mfrow=c(1,1))
+data_con <- dataFei %>%
+  select(time2, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+basis <- create.bspline.basis(rangeval = c(10,150), nbasis = 45)
+
+data_con_fda <- smooth.basis(argvals = 10:150,data_con[10:150,-1] %>% as.matrix(),basis)$fd
+
+plot(data_con_fda) 
+
+```
+
+
+## Introduction to Functional Regression
+
+In classical statistics where data are measured in scalar format on each subject, a simple linear regression between an output $Y$ regressed on an input $X$ is often appropriate.  This allows the analysts to 1) understand the relationship between $(X,Y)$ through the $\beta$ coefficients, and 2) make predictions of $Y$ for new values of $X$.
+
+Consider the model $$y = \beta_0 + \beta_1 \times x$$ where the goal is to find $(\beta_0, \beta_1)$ such that the fitted value of $y$, denoted $\hat{y}$, is close to the observed $y$.  *Ordinary Least Squares (OLS)* is often used to select the best coefficients, denoted as $(\hat{\beta}_0,\hat{\beta}_1)$, is a measure of the distance between $y$ and $\hat{y}$.  Assume $i=1,2,\ldots,n$ subjects have measurements $(x_i,y_i)$, then the goal is to find $(\hat{\beta}_0,\hat{\beta}_1)$ that minimizes the squared distances between $y_i$ and $\hat{y}_i$:  $$\min_{\hat{\beta}_0,\hat{\beta}_1} \sum_{i=1}^{n} (y_i - \hat{y}_i)^2,\quad \hat{y}_i =  (\hat{\beta}_0+\hat{\beta}_1 x_i)$$.
+
+**Consider the case where the output variable $Y$ is in functional form**, such as the concentration of A, $C_a$, measured at multiple times.  Assume further the input variable, $X$, is a scalar. A *functional regression* model, $fRegress$, is analogous to simple linear regression when both $(X,Y)$ are scalars (see above), except the $\beta$ coefficients are functions - *you need to add functions $(\hat{\beta}_0, \hat{\beta}_1)$ so the results $\hat{y}$ is a function*.  Denote functional coefficients by $(\hat{\beta}_0^f, \hat{\beta}_1^f)$, and the observed and fitted outcomes by $(y_i^f, \hat{y}_i^f)$
+
+In $fRegress$ the summation in OLS is replaced by an integration:  $$\min_{\hat{\beta}_0^f,\hat{\beta}_1^f} \int_{i=1}^{n} (y_i^f - \hat{y}_i^f)^2,\quad \hat{y}_i^f =  (\hat{\beta}_0^f + \hat{\beta}_1^f x_i).$$ Functional coefficients can be efficiently calculated but not discussed in detail here. One intuitive way to think of them is as changes in the coefficient over time or space.
+
+
+## fRegress Simulations
+
+We present 3 different cases to show the power of functional regression.
+
+In the first case, we do a simple Function on Scalar Regression. The output variable Y is Functional Concentration of A, plotted above. The explanatory variable X is normalized Inlet Temperature. Below, the following plots are shown:
+
+- (Top Left): The functional Concentration A curves
+- (Top Right): The $\hat{y}$ curves from the regression model
+- (Bottom Left): $\beta_0$, or the mean curve/coefficient from the regression model.
+- (Bottom Right): $\beta_1$, or the coeffiecient to multiply Inlet Temp. by, and then add to B0 in order to get an expected yhat curve.
+
+```{r regression, echo=FALSE}
+
+### setup regression
+Tin <- dataFei %>%
+  group_by(Replicate) %>%
+  distinct(Temp_inlet)
+Tin <- Tin$Temp_inlet %>% as.vector() #%>% as.factor()
+
+Tc <- dataFei %>%
+  group_by(Replicate) %>%
+  distinct(coolingTemp) 
+Tc <- Tc$coolingTemp %>% as.vector()
+Tc2 <- (Tc-mean(Tc))/sd(Tc)
+Tin2 <- (Tin-mean(Tin))/sd(Tin)
+#Tin2 <- sample(Tin2)
+Tin_Tc <- Tin2 * Tc2
+
+
+
+## regression
+par(mfrow=c(2,2))
+plot(data_con_fda)
+
+fReg <- fRegress(data_con_fda ~ Tin2 )
+plot(fReg$yhatfdobj)
+
+#par(mfrow=c(2,2))
+plot(fReg$betaestlist$const)
+plot(fReg$betaestlist$Tin2)
+#plot(fReg$betaestlist$Tc2)
+#plot(fReg$betaestlist$Tin_Tc)
+```
+
+In this second case, we permute the Tin variable, thus removing any relationship between the Inlet Temperature and the Concentration A Curves.
+
+In the plots below, we see that the $\hat{y}$ curves are grouped much tighter, showing very little difference when Inlet Temperature is changed. We can also see that the absolute value of the $\beta_1$ coefficient is much smaller for the 2nd model compared to the 1st. 
+
+
+```{r permuting covariates, echo=FALSE}
+
+Tin2 <- sample(Tin2)
+fReg2 <- fRegress(data_con_fda ~ Tin2 )
+par(mfrow=c(2,2))
+plot(data_con_fda)
+plot(fReg2$yhatfdobj)
+plot(fReg2$betaestlist$const)
+plot(fReg2$betaestlist$Tin2)
+
+
+```
+
+In the third case, we permute the last 50 seconds of data in the functional curves. Relationships between ConA and Inlet Temp are maintained for the first 90 timepoints, but are taken away for those last 50 seconds.
+
+In the plot of the $\beta_1$ coefficient, we can see the coefficient stay very close to 0 after the 100th timepoint. We can also see the $\hat{y}$ curves become much tighter after this 100th timepoint.
+
+```{r permuting the raw data, echo=FALSE}
+
+x1 <- data_con[1:100,-1]
+
+x2 <- data_con[101:5001,-1]
+x2 <- sample(as.vector(as.matrix(x2)))
+x2 <- matrix(x2, nrow=4901) %>% as.data.frame()
+colnames(x2) <- colnames(x1)
+x3 <- rbind(x1,x2)
+data_con_fda_perm <- smooth.basis(argvals = 10:150,x3[10:150,] %>% as.matrix(),basis)$fd
+
+par(mfrow=c(1,1))
+plot(data_con_fda_perm)
+Tin2 <- (Tin-mean(Tin))/sd(Tin)
+fReg3 <- fRegress(data_con_fda_perm ~ Tin2 )
+
+par(mfrow=c(2,2))
+plot(data_con_fda_perm)
+plot(fReg3$yhatfdobj)
+plot(fReg3$betaestlist$const)
+plot(fReg3$betaestlist$Tin2)
+
+
+```
+
+
+Plotted below are the permutation tests for the 3 analyses shown above. When reading these plots, the red line being above the dashed line is considered a significant result. This is most clear in the third result, where model is significant until timepoint 100, where values were permuted.
+
+
+
+```{r perm test comparisons, echo = FALSE}
+
+### get this to work!!
+par(mfrow=c(1,1))
+f <- Fperm.fd(data_con_fda, fReg$xfdlist,betalist =  fReg$betalist,nperm = 200)
+f2 <- Fperm.fd(data_con_fda, fReg2$xfdlist,betalist =  fReg2$betalist,nperm = 200)
+f3 <- Fperm.fd(data_con_fda_perm, fReg3$xfdlist,betalist =  fReg3$betalist,nperm = 200)
+
+#plot(f$Fvals, type = "l")
+
+
+
+```
+
+
+
+
+```{r Calculating yhat for different Tin, include=FALSE}
+
+ ##This chunk may not be included!!!
+# coefs.df <- data.frame(time = 1:150,
+#                        B0 = eval.fd(1:150,fReg$betaestlist$const$fd),
+#                        B1 = eval.fd(1:150,fReg$betaestlist$Tin$fd)
+# ) %>%
+#   mutate(Tin_300 = B0 + B1*300,
+#          Tin_250 = B0+B1*250,
+#            Tin_200 = B0+B1*200,
+#          Tin_400 = B0+B1*400)
+# 
+# lines(1:150, coefs.df$Tin_400)
+# 
+# par(mfrow=c(1,1))
+# plot(coefs.df$time, coefs.df$Tin_300, ylim=c(0,1), type = "l");grid()
+# abline(h=0.2)
+# #lines(coefs.df$time, coefs.df$Tin_250, col = "red")
+# #lines(coefs.df$time, coefs.df$Tin_200, col = "red")
+# 
+# temps <- seq(300,3000,by=300)
+# for(i in temps){
+#   x <- coefs.df$B0 + coefs.df$B1*i
+#   lines(coefs.df$time, x, col = "red")
+# }
+# 
+# x <- coefs.df$B0 + coefs.df$B1*3000
+# lines(coefs.df$time, x, col = "blue")
+
+```
+

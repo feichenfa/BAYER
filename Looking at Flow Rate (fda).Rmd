@@ -1,0 +1,72 @@
+---
+title: "Looking at Flow Rate"
+author: "Rohan Mishra"
+date: "7/29/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE,cache=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+source("/mnt/fda_CI.R")
+options(scipen=9999)
+options(max.print = 10000000) 
+
+```
+
+```{r get the data}
+
+dataFlow <- "/mnt/DATA/Flow Variation/Tc250Tin400to500_Q_75to100.csv" %>% read.csv() 
+
+dataFlow$Replicate <- factor(dataFlow$Replicate, levels = unique(dataFlow$Replicate))
+unique(dataFlow$Replicate) %>% head()
+
+dataFlow$Flow_Group <- str_split_fixed(dataFlow$Replicate, fixed("_"), n=4)[,3] #%>% factor()
+dataFlow$Tin_group <- str_split_fixed(dataFlow$Replicate, fixed("_"), n=3)[,1] %>% factor()
+dataFlow$Tc_group <- str_split_fixed(dataFlow$Replicate, fixed("_"),n=3)[,2] %>% factor()
+dataFlow <- dataFlow %>%
+  group_by(Replicate) %>%
+  mutate(time2 = row_number()#,
+         # Tin_norm = (Tin_group-mean(Tin_group))/sd(Tin_group),
+         # Tc_norm = (Tc_group-mean(Tc_group))/sd(Tc_group)
+         )
+
+head(dataFlow[,1:10]) %>% pander::pander()
+
+dataFlow %>% 
+  #filter(Tin_group %in% c(500:570)) %>%
+  ggplot(aes(x=time, y = concentrationA, group = Replicate, color = Flow_Group)) + geom_line(size = 0.5)
+
+dataFlow_Tin_sp <- split(dataFlow, f=dataFlow$Tin_group)
+
+
+i=1
+g=list()
+for(i in 1:11){
+  one <- dataFlow_Tin_sp[[i]]
+  one= as.data.frame(one)
+  one$Replicate= as.character(one$Replicate)
+  one$Tin_group= as.character(one$Tin_group)
+  one$Tc_group= as.character(one$Tc_group)
+  one= subset(one,one$time2 <= 150)
+  g[[i]]=ggplot(one,aes(x=time2,y=concentrationA, col = Flow_Group , group = Replicate)) +
+    geom_line() +
+    #xlim(0,150) +
+    ggtitle(paste("Tin = ", names(dataFlow_Tin_sp)[i]))  + theme(legend.position = "None")
+}
+
+g[[1]] <- g[[1]] + theme(legend.position = c(.8, .5),
+               legend.key.size = unit(.25, 'cm'))
+
+grid.arrange(g[[1]],g[[2]],g[[3]],
+             g[[4]],g[[5]],g[[6]],
+             g[[7]],g[[8]],g[[9]],
+             g[[10]],g[[11]], nrow=4)
+
+
+```

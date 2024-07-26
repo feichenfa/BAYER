@@ -1,0 +1,110 @@
+---
+title: 'Steady State Simulation 1'
+author: "William D. Shannon, PhD, MBA"
+date: "5/25/2022"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(deSolve)
+
+```
+
+## Simulated Data
+
+Steady state ODE data was generated adding noise to temperature. Adding noise to instantaneous collision rate resulted in concentration increasing so am still trying to resolve this in the *R DeSolve* package.
+
+The two simulated datsets used $Temperature \in \{275, 280, 285\}$
+
+```{r ODE1, echo=TRUE}
+
+# ODE with collision rate noise added
+SIR.noise <- function(time, state, parameters) {
+  with(as.list(c(state, parameters)),
+       {
+         dCdt = -k  * C
+         return(list(c(dCdt))) 
+       })}
+
+
+# Arrehenius equation
+A = 7.2e10
+E = 72751.96
+R = 8.31451
+T = 400
+
+k.arrhenius = function(A, E, R, T) {A*exp(1)^(-E/(R*T))}
+
+
+# Generate and plot data
+state <- c(C=1) #initial conditions for odes
+time <-seq(from = 0, to = 5000, length.out = 5001)
+
+
+# Noise N(0,1) on temp
+result.1 = NULL
+for(Temp in c(275, 280, 285)) {
+  for(T in round(Temp + rnorm(10, 0, 1), 2)) {
+    k = k.arrhenius(A,E,R,T)
+    out.test = ode(y=state, 
+                   times=time,
+                   func=SIR.noise, 
+                   parms=c(k = k))
+    result.1 = rbind(result.1, cbind(k=k, Temp=Temp, T=T, out.test))
+  }
+}
+
+result.df = as.data.frame(result.1)
+result.df$Temp = as.factor(result.df$Temp)
+ggplot(result.df, aes(x=time, y=C, group=T, color=Temp)) +
+  geom_line() +
+  ggtitle('Temperature Noise ~N(0, 1)') +
+ # scale_y_continuous(trans='log10') +
+  ylim(c(0,1)) +
+  ylab('Concentration') +
+  xlab('Time')
+
+
+# Noise N(0,2) on temp
+result.2 = NULL
+for(Temp in c(275, 280, 285)) {
+  for(T in round(Temp + rnorm(10, 0,2.5), 2)) {
+    k = k.arrhenius(A,E,R,T)
+    out.test = ode(y=state, 
+                   times=time,
+                   func=SIR.noise, 
+                   parms=c(k = k))
+    result.2 = rbind(result.2, cbind(k=k, Temp=Temp, T=T, out.test))
+  }
+}
+
+result.df = as.data.frame(result.2)
+result.df$Temp = as.factor(result.df$Temp)
+ggplot(result.df, aes(x=time, y=C, group=T, color=Temp)) +
+  geom_line() +
+  ggtitle('Temperature Noise ~N(0, 2)') +
+ # scale_y_continuous(trans='log10') +
+  ylim(c(0,1)) +
+  ylab('Concentration') +
+  xlab('Time')
+
+```
+
+## Analyses
+
+These data will be analyzed to show possible approaches we can use with more complex ODEs.
+
+* Descriptive statistics (functional mean and CIs)
+* Hypothesis tests
+* Functional PCA
+* Functional regression
+
+A DAG model will be defined and a more complex DAG developed (*e.g.*, when concentration hits a threshold a new ODE will begin).
+
+We are also looking at how the *CTSR* functions in the *R FDA* package for 'Continuously Stirred Tank Reactor' ODEs based on the attached paper by Ramsay. 

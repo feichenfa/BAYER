@@ -1,0 +1,112 @@
+---
+title: "fPCA"
+author: "Rohan Mishra"
+date: "10/5/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+options(scipen=9999)
+options(max.print = 10000000) 
+
+```
+
+
+```{r first data, echo = FALSE}
+
+#dataFei <- read.csv("/mnt/DATA/Fei/data_for_regression_report29Sep2022.csv") 
+dataFei <- read.csv("/mnt/DATA/Tin & Tc Variation/Tc200to500Tin200to500_by5.csv") 
+
+
+dataFei$Replicate <- factor(dataFei$Replicate,
+                            levels = unique(dataFei$Replicate))
+dataFei <- dataFei %>%
+  group_by(Replicate) %>%
+  mutate(time2=row_number(),
+         Tin_group=plyr::round_any(Temp_inlet,10),
+         Tc_group=plyr::round_any(coolingTemp,10))
+
+dataFei %>%
+  filter(time2<=150) %>%
+  ggplot(aes(x=time2, y=concentrationA, color=Replicate, group=Replicate)) + 
+  geom_line() + 
+  theme(legend.position="none") + 
+  ggtitle("Sample Data from Reactor Simulation") +
+  ylim(0, 1)
+
+
+# SETUP FD OBJECT FOR USE IN LATER CHUNKS
+par(mfrow=c(1,1))
+data_con <- dataFei %>%
+  select(time2, 
+         concentrationA, Replicate
+         ) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+data_con <- data_con[sample(colnames(data_con), size = 100)]
+
+### to permute the data - NEED HELP!!  ####
+x1 <- data_con[1:100,-1]
+
+x2 <- data_con[101:5001,-1]
+x2 <- sample(as.vector(as.matrix(x2)))
+x2 <- matrix(x2, nrow=4901) %>% as.data.frame()
+colnames(x2) <- colnames(x1)
+x3 <- rbind(x1,x2)
+######
+basis <- create.bspline.basis(rangeval = c(1,150), 
+                              nbasis = 45)
+
+data_con_fda <- smooth.basis(argvals = 1:150,
+                             data_con[1:150,-1] %>%
+                               as.matrix(), basis)$fd
+
+plot(data_con_fda) 
+saveRDS(data_con, "/mnt/DATA/for_fPCA.rds")
+
+con_pca <- pca.fd(data_con_fda, nharm=4)
+
+par(mfrow=c(2,2))
+plot(con_pca)
+
+
+
+```
+
+
+
+```{r single run}
+
+dataFei <- read.csv("/mnt/DATA/Fei/cstr_functional_ontology_synethic_08242022.csv") 
+
+
+###OR (for single run)
+data_con <- dataFei %>% select(coolingTemp, concentrationA_inlet, Temp_inlet, flowRate, concentrationA, Temp)
+
+basis <- create.bspline.basis(rangeval = c(1,5001), 
+                              nbasis = 45)
+
+data_con_fda <- smooth.basis(argvals = 1:5001,
+                             data_con[1:5001,-1] %>%
+                               as.matrix(), basis)$fd
+
+plot(data_con_fda) 
+
+con_pca <- pca.fd(data_con_fda, nharm=3)
+
+par(mfrow=c(2,2))
+plot(con_pca)
+
+
+
+```
+

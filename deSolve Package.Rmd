@@ -1,0 +1,75 @@
+---
+title: "deSolve Package"
+author: "Rohan Mishra"
+date: "5/12/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+library(deSolve)
+
+```
+
+
+### Logistic Growth
+
+Differential Equation: dN/dt = r*N*(1-(N/K))
+Analytical solution: N(t) = (K*N(0)*exp(r*t))/(K+N(0)*(exp(r*t)-1))
+
+
+```{r Logistic Growth}
+
+logistic <- function(t,r,K,NO) {
+  (K*NO*exp(r*t))/(K+NO*(exp(r*t)-1))
+}
+plot(0:100, logistic(t=0:100, r=0.1, K=10, NO=0.1))
+
+
+```
+
+## Numerical Solution to logistic equation
+define the model with the Differential Equation above:
+```{r deSolve solves the DiffEq, echo=FALSE}
+
+model <- function(time, y, parms) {
+  with(as.list(c(y,parms)), {
+    dN <- r*N*(1-(N/K))
+    list(dN)
+  })
+}
+
+y <- c(N=0.1)
+parms<- c(r=0.1,K=10)
+times <- seq(0,100,1)
+
+out <- ode(y,times, model, parms)
+plot(out)
+
+```
+
+Coupled ODEs: the rigidODE problem
+
+```{Coupled ODE}
+
+I1=0.5
+I2=2
+I3=3
+
+rigidode <- function(t,y,parms){
+  dy1 <- -2 * y[2]*y[3]
+  dy2 <- 1.25*y[1]*y[3]
+  dy3 <- -0.5*y[1]*y[2]
+  list(c(dy1,dy2,dy3))
+}
+y_init <- c(y1=1,y2=0,y3=0.9)
+times <- seq(0,20,.01)
+out <- ode(times = times, y=y_init, func = rigidode, parms = NULL)
+
+
+```
+
+

@@ -1,0 +1,247 @@
+ ---
+title: "Regression Write-Up"
+author: "Rohan Mishra"
+date: "`r Sys.Date()`"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+ 
+
+
+```{r setup, include=FALSE}
+
+rm(list=ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+options(scipen=9999)
+options(max.print = 10000000) 
+
+```
+
+The goal of regression is to obtain estimates of the coefficients for two reasons:
+
+1. They predict the output
+2. They describe the relationships between the covariates and output
+
+
+This report defines functional regression modeling and applies it to some reactor simulation data for illustration.
+
+In classical statistics where data are measured in scalar format on each subject, a simple linear regression between an output $Y$ regressed on an input $X$ is often appropriate.  This allows the analysts to 1) understand the relationship between $(X,Y)$ through the $\beta$ coefficients, and 2) make predictions of $Y$ for new values of $X$.
+
+Consider the model $$y = \beta_0 + \beta_1 \times x$$ where the goal is to find $(\beta_0, \beta_1)$ such that the fitted value of $y$, denoted $\hat{y}$, is close to the observed $y$.  *Ordinary Least Squares (OLS)*, often used to select the best coefficients, denoted as $(\hat{\beta}_0,\hat{\beta}_1)$, is a measure of the distance between $y$ and $\hat{y}$.  Assume $i=1,2,\ldots,n$ subjects have measurements $(x_i,y_i)$, then the goal is to find $(\hat{\beta}_0,\hat{\beta}_1)$ that minimizes the squared distances between $y_i$ and $\hat{y}_i$:  $$\min_{\hat{\beta}_0,\hat{\beta}_1} \sum_{i=1}^{n} (y_i - \hat{y}_i)^2,\quad \hat{y}_i =  (\hat{\beta}_0+\hat{\beta}_1 x_i)$$.
+
+**Consider the case where the output variable $Y$ is in functional form**, such as the concentration of A, $C_a$, measured at multiple times.  Assume further the input variable, $X$, is a scalar. A *functional regression* model, $fRegress$, is analogous to simple linear regression when both $(X,Y)$ are scalars (see above), except the $\beta$ coefficients are functions - *you need to add functions $(\hat{\beta}_0, \hat{\beta}_1)$ so the results $\hat{y}$ is a function*.  Denote functional coefficients by $(\hat{\beta}_0^f, \hat{\beta}_1^f)$, and the observed and fitted outcomes by $(y_i^f, \hat{y}_i^f)$
+
+In $fRegress$ the summation in OLS is replaced by an integration:  $$\min_{\hat{\beta}_0^f,\hat{\beta}_1^f} \int_{i=1}^{n} (y_i^f - \hat{y}_i^f)^2,\quad \hat{y}_i^f =  (\hat{\beta}_0^f + \hat{\beta}_1^f x_i).$$ Functional coefficients can be efficiently calculated but not discussed in detail here. One intuitive way to think of them is as changes in the coefficient over time or space.
+
+
+# Data Example
+
+We selected a subset of the reactor simulated data where the *Concentration A*, denoted $[A]$, is determined by the *Input Temperature*, denoted *temp_Inlet.* The subset was selected to simplify this discussion by converging onto $[A]$ between $(0.75, 0.8)$ for *temp_Inlet* randomly sampled from $Uniform(300, 350)$.
+
+
+```{r load data, echo = FALSE}
+
+dataFei <- "/mnt/DATA/Fei/data_for_regression_report29Sep2022.csv" %>%
+  read.csv() 
+
+dataFei$Replicate <- factor(dataFei$Replicate, 
+                            levels = unique(dataFei$Replicate))
+dataFei <- dataFei %>%
+  group_by(Replicate) %>%
+  mutate(time2=row_number(),
+         Tin_group=plyr::round_any(Temp_inlet,10),
+         Tc_group=plyr::round_any(coolingTemp,10))
+
+
+dataFei %>%
+  filter(time2<=150 & time2>=10) %>%
+  ggplot(aes(x=time2, y=concentrationA, 
+             color=Temp_inlet, group=Temp_inlet)) + 
+  geom_line() + 
+  theme(legend.position="none") + 
+  ggtitle("Sample Data from Reactor Simulation") +
+  xlim(0, 150) + ylim(0, 1)
+
+
+
+```
+
+
+```{r fd, echo=FALSE}
+
+# SETUP FD OBJECT FOR USE IN LATER CHUNKS
+par(mfrow=c(1,1))
+data_con <- dataFei %>%
+  select(time2, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+basis <- create.bspline.basis(rangeval = c(10,150), 
+                              nbasis = 45)
+
+data_con_fda <- smooth.basis(argvals = 10:150,
+                             data_con[10:150,-1] %>%
+                               as.matrix(), basis)$fd
+
+#plot(data_con_fda) 
+
+```
+
+
+
+# Functional Regression Examples
+
+We present 2 cases to illustrate functional regression.
+
+## Output is Functional [A], Input is Scalar *temp_Inlet*
+
+For the first model, $$[A] = \beta_0^f + \beta_1^f \times temp\_Inlet,$$ the **functional coefficients** $(\beta_0^f, \beta_1^f)$ are plotted. Note the *temp_Inlet* was normalized before fitting for statistical reasons, but has no impact on model fit other than the scale of the coefficients.
+
+
+```{r Bill regression, echo=FALSE}
+
+### setup regression
+Tin <- dataFei %>%
+  group_by(Replicate) %>%
+  distinct(Temp_inlet)
+Tin <- Tin$Temp_inlet %>% as.vector() #%>% as.factor()
+Tin2 <- (Tin-mean(Tin))/sd(Tin)
+
+## regression
+fReg <- fRegress(data_con_fda ~ Tin )
+
+par(mfrow=c(1,2))
+plot(fReg$betaestlist$const$fd$coefs, 
+     ylab = 'Value', xlab='Time',
+     type='l')
+grid()
+title(main="Beta 0 FD Coeff.", cex= 0.5)
+plot(fReg$betaestlist$Tin$fd$coefs, 
+     ylab = 'Value', xlab='Time',
+     type='l', main='Beta 1 FD Coeff.')
+grid()
+
+```
+
+To predict $[A]$ for any *temp_inlet* value at each time point, add the value of the cofficient values at each time point $t$, $\beta_0(t) + \beta_1(t) \times temp\_Inlet$. The next plot shows these fitted values for a range of possible *temp_Inlet* inputs and represent the predicted $[A]$.
+
+```{r reg1yhat, echo=F}
+
+b0 = fReg$betaestlist$const$fd$coefs
+b1 = fReg$betaestlist$Tin$fd$coefs
+
+xpred = seq(300, 350, length.out = 6)
+yhat = NULL
+for(i in 1:6) yhat = cbind(yhat,
+                           b0 + b1*xpred[i])
+par(mfrow=c(1,1))
+ts.plot(yhat, ylab='Predicted [A]', ylim=c(0,1))
+grid()
+
+
+```
+
+The relationship between the input *temp_Inlet* and output $[A]$ is understood by examining the coefficients shown above. 
+
+We interpret coefficient $\beta_1$ as follows. As the *temp_Inlet* increases and multiplied by $\beta_1$, the $[A]$ will decrease more. To be specific, at Time = 3, the value of $\beta_1 = -0.005$. At $temp\_Inlet = 300$, this reduces $[A]$ by $-0.005 \times 300 = -1.5$. For $temp\_Inlet = 350$, $[A]$ is reduced by $-0.005 \times 350 = -1.75$.
+
+Note that after time = 20 there is less redcution in $[A]$ since $\beta_1$ flattens out near 0.
+
+To make a prediction, these reductions are added to $\beta_0$ for each time point. So for Time = 3 the predicted value of $[A]$ for $temp\_Inlet = 300$ is about $2.2 - 1.5 = 0.7$, and for $temp\_Inlet = 350$ is about $2.2 - 1.75 = 0.45$.
+
+In the next plot we show these predicted $[A]$ curves.
+
+
+```{r reg1yhat 2 temps, echo=F}
+b0 = fReg$betaestlist$const$fd$coefs
+b1 = fReg$betaestlist$Tin$fd$coefs
+
+xpred = c(300, 350)
+yhat = NULL
+for(i in 1:2) yhat = cbind(yhat,
+                           b0 + b1*xpred[i])
+par(mfrow=c(1,1))
+ts.plot(yhat, ylab='Predicted [A]', ylim=c(0,1))
+grid()
+
+
+```
+
+To test whether $\beta_1$ is differnt from 0 (i.e., not statistically significant), we use a permutation test. Where the red line falls above the dashed blue we say the coefficient is statistical different. 
+
+```{r perm test comparisons, echo = FALSE}
+
+
+par(mfrow=c(1,1))
+f <- Fperm.fd(data_con_fda, fReg$xfdlist,betalist =  fReg$betalist,nperm = 200, plotres = FALSE)
+plot(f$Fvals, ylim=c(0,0.2), type = "l", col = "red", lwd=3, ylab = "F-Statistic", main = "Permutation F-Test"); grid()
+abline(h=f$qval, col = "blue", lty=1, lwd = 2)
+#abline(h=f$qvals.pts, col = "blue", lty = 3, lwd=2)
+
+
+
+
+
+```
+
+
+## Permuting the Covariates
+
+*temp_Inlet* was permuted accross the sample curves, taking away the relationship between *temp_Inlet* & $[A]$ Curves.
+
+
+```{r permuting covariates, echo=FALSE}
+
+Tin2 <- sample(Tin2)
+fReg2 <- fRegress(data_con_fda ~ Tin2 )
+
+par(mfrow=c(1,2))
+plot(fReg2$betaestlist$const$fd$coefs, 
+     ylab = 'Value', xlab='Time',
+     type='l', main="Beta 0 FD Coeff.")
+grid()
+plot(fReg2$betaestlist$Tin$fd$coefs, 
+     ylab = 'Value', xlab='Time',
+     type='l', main='Beta 1 FD Coeff.')
+grid()
+
+```
+
+If we look at the $\beta_1$ coefficient plot, we see that it is much closer to 0 than in the previous model. Because of this, different *temp_Inlet* inputs will yield a curve very close to the $\beta_0$ coefficient curve.
+
+
+```{r reg2yhat, include=F}
+
+b0 = fReg2$betaestlist$const$fd$coefs
+b1 = fReg2$betaestlist$Tin$fd$coefs
+
+xpred = seq(300, 350, length.out = 6)
+yhat = NULL
+for(i in 1:6) yhat = cbind(yhat,
+                           b0 + b1*xpred[i])
+par(mfrow=c(1,1))
+ts.plot(yhat, ylab='Predicted [A]', ylim=c(0,1))
+grid()
+
+
+```
+
+When running the permutation test on this model, we see that the red line is strictly below the blue line.
+
+```{r PermTest2, echo = FALSE}
+
+par(mfrow=c(1,1))
+f2 <- Fperm.fd(data_con_fda, fReg2$xfdlist,betalist =  fReg2$betalist,nperm = 200, plotres = FALSE)
+plot(f2$Fvals, ylim=c(0,0.01), type = "l", col = "red", lwd=3, ylab = "F-Statistic", main = "Permutation F-Test"); grid()
+abline(h=f2$qval, col = "blue", lty=1, lwd = 2)
+
+```
+
+
+
+
+

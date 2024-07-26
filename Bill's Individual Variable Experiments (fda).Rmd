@@ -1,0 +1,438 @@
+---
+title: "Bill's Individual Variable Experiments"
+author: "Rohan Mishra"
+date: "7/6/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = FALSE) 
+library(fda)
+library(tidyverse)
+library(gridExtra)
+source("/mnt/fda_CI.R")
+
+```
+
+CARLOS: Consider this to be the primary document to use as a resource for fRegression on the Bayer Data. Before each chunk, I'll have a blurb describing what I'm doing within that chunk. Additional comments will be within the chunk for specific tasks.
+
+
+
+```{r Experiment 1 Tin Variation Only, echo = FALSE}
+
+
+### load the data
+data <- "/mnt/DATA/Tin & Tc Variation/oneRunOnlyTinat600Tcat200NoVariation.csv" %>% read_csv() 
+#data <- "/mnt/DATA/Tin & Tc Variation/fiveRunsallCombosDiffIns.csv" %>% read_csv() 
+
+#datatemp <- data %>% filter(time %in% c(1:50))
+## turn the Replicate column into a factor
+data$Replicate <- factor(data$Replicate, levels = unique(data$Replicate))
+
+# some of the ways you can save the list of Tins:
+
+#Tin_group <- as.list(seq(375,525,by=5))
+#data$Tin_group <- lapply(Tin_group, function(i) rep(i,25005)) %>% unlist() %>% as.vector()
+data$Tin_group <- rep(600,5001)
+
+
+### split the data into lists
+data_sp <- data %>% 
+  split(f=data$Replicate) 
+rep <- names(data_sp)
+
+
+### plot the dataset
+data %>%
+  ggplot(aes(x=time, y=concentrationA,col=as.factor(Tin_group),group=Replicate)) + geom_line() 
+
+data %>%
+  ggplot(aes(x=time, y=concentrationA)) + geom_line() 
+
+
+# 
+# data %>%
+#   filter(Tin_group %in% c(500)) %>%
+#   ggplot(aes(x=time, y=concentrationA,col=as.factor(Replicate),group=Replicate)) + geom_line() 
+
+
+### store Tin values
+Tins <- lapply(data_sp, function(i) head(i$Temp_inlet,1)) %>% unlist()
+
+#### Create FDA objects for fRegress
+data_con <- data %>%
+  select(time, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+#### create basis
+basis <- create.bspline.basis(rangeval = c(0,5001), nbasis = 50)
+
+
+# convert data_con to fda object
+data_con_fda <- smooth.basis(argvals = 1:5001,data_con[,-1] %>% as.matrix(),basis)$fd
+
+
+
+# fRegression setup- not worth running in this chunk since it's only one run
+# f_Tin <- fRegress(data_con_fda ~ Tins)
+# par(mfrow=c(1,2))
+# plot(f_Tin$betaestlist$const); title(main="B0")
+# plot(f_Tin$betaestlist$Tins); title(main="B1")
+
+```
+
+Now we go into multiple runs of Fei's simulation. dim(data)/5001 or length(unique(data$Replicate)) will give you the number of simulations you have in your dataset.
+
+
+```{r for Report, echo = FALSE}
+
+
+### load the data
+data <- "/mnt/DATA/Tin & Tc Variation/forReport19Jul2022_4.csv" %>% read_csv() 
+#data <- "/mnt/DATA/Tin & Tc Variation/fiveRunsallCombosDiffIns.csv" %>% read_csv() 
+
+#datatemp <- data %>% filter(time %in% c(1:50))
+## split the data
+
+
+data$Replicate <- factor(data$Replicate, levels = unique(data$Replicate))  ## turn Replicate to factor
+data$Tin_group <- str_split_fixed(data$Replicate, fixed("_"), n=3)[,1] %>% factor() # create factor of Tin value for a simulation
+data$Tc_group <- str_split_fixed(data$Replicate, fixed("_"),n=3)[,2] %>% factor() # create factor of Tc value for a simulation
+
+## lines 102 & 103 can also be done using the Temp_inlet and coolingTemp columns already in the dataset (and more easily too)
+
+
+# create an integer based time column
+data <- data %>%
+  group_by(Replicate) %>%
+  mutate(time2 = row_number())
+ 
+
+## split the data
+data_Tc_sp <- split(data, f=data$Tc_group)
+
+
+### plots, different Tin within plots, different Tc accross plots - for loop method (more code but more flexible)
+Tcs <- names(data_Tc_sp)
+g <- list()
+for(i in 1:7){
+  g[[i]] <- data_Tc_sp[[i]] %>%
+    ggplot(aes(x=time2,y=concentrationA, col = Tin_group, group = Replicate))+
+    geom_line() +
+    xlim(0,150) +
+    ggtitle(paste("Tc = ", as.character(Tcs[[i]])))
+}
+#grid.arrange(g[[1]],g[[2]],g[[3]],g[[4]],g[[5]], g[[6]],g[[7]])
+
+grid.arrange(g[[2]],g[[3]],g[[4]],g[[5]], g[[6]],g[[7]], ncol=2)
+
+### plots, different Tin within plots, different Tc accross plots- lapply method (easier to code but less flexible)
+g <- lapply(data_Tc_sp,function(i)
+  i %>%
+    ggplot(aes(x=time,y=concentrationA, col = Tin_group, group = Replicate)) + geom_line() + xlim(0,10))
+grid.arrange(g[[1]],g[[2]],g[[3]],g[[4]],g[[5]])
+
+###plot all of the data together
+
+data %>%
+  ggplot(aes(x=time2, y=concentrationA,col=as.factor(Tin_group),group=Replicate)) + geom_line() 
+
+
+### getting ready for fRegression- the number of curves in the fda object MUST match the number of explanatory variables for each beta
+### if y = B0 + B1*x1+B2*x2, and y has 5 curves, then x1 & x2 must both be a vector of length 5 OR another fda object with 5 curves
+reps <- unique(data$Replicate)
+Tin <- substr(reps, 1,3) %>% as.numeric()
+Tc <- substr(reps, 5,7) %>% as.numeric()
+
+## creating interaction variable- only possible if both x1 & x2 are scalar and numeric
+Tin_Tc <- Tin * Tc
+
+
+#### Create FDA objects for fRegress
+data_con <- data %>%
+  select(time, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+#### create basis
+basis <- create.bspline.basis(rangeval = c(0,150), nbasis = 50)
+
+data_con_fda <- smooth.basis(argvals = 1:150,data_con[1:150,-1] %>% as.matrix(),basis)$fd
+
+plot(data_con_fda)
+
+
+# fRegress without Interaction 
+f_No_Interaction <- fRegress(data_con_fda ~ Tin + Tc )
+par(mfrow=c(3,1))
+plot(f_No_Interaction$betaestlist$const, xlim = c(0,150)); title(main="B0")
+plot(f_No_Interaction$betaestlist$Tin, xlim = c(0,150)); title(main="B1")
+plot(f_No_Interaction$betaestlist$Tc, xlim=c(0,150)); title(main="B2")
+#plot(f_Interaction$betaestlist$Tin_Tc, xlim = c(0,150)); title(main="B3")
+
+
+
+# fRegress with Interaction
+f_Interaction <- fRegress(data_con_fda ~ Tin + Tc + Tin_Tc)
+par(mfrow=c(2,2))
+plot(f_Interaction$betaestlist$const, xlim = c(0,150)); title(main="B0")
+plot(f_Interaction$betaestlist$Tin, xlim = c(0,150)); title(main="B1 (Tin)")
+plot(f_Interaction$betaestlist$Tc, xlim=c(0,150)); title(main="B2 (Tc)")
+plot(f_Interaction$betaestlist$Tin_Tc, xlim = c(0,150)); title(main="B3 (Tc * Tin)")
+
+class(f_Interaction$betaestlist$const)
+
+
+
+```
+
+
+The chunk below covers predicting concentrationA curves from the fRegress model calculated above. eval.fd is used to get the coefficients, and dplyr commands are used to calculate the predicted concentration curves.
+
+
+```{r fitted values using eval.fd}
+
+
+### predicting curves with Tc & Tin values not in the dataset
+
+#create dataframe with each column as the beta coeficients over time (column is Beta, row is time)
+f_Int_B0 <- eval.fd(0:150, f_Interaction$betaestlist$const$fd)
+f_Int_B1 <- eval.fd(0:150, f_Interaction$betaestlist$Tin$fd)
+f_Int_B2 <- eval.fd(0:150, f_Interaction$betaestlist$Tc$fd)
+f_Int_B3 <- eval.fd(0:150, f_Interaction$betaestlist$Tin_Tc$fd)
+coefs.df <- data.frame(B0 = f_Int_B0,
+                       B1 = f_Int_B1,
+                       B2 = f_Int_B2,
+                       B3 = f_Int_B3)
+
+#use the mutate function to plug in different numbers to each variable. Plotting this column against time will yield the predicted curve
+
+coefs.df <- coefs.df %>%
+  mutate(Tin_400 = B0 + B1*400+B2*300+B3*300*400)
+
+
+#g[[5]]
+coefs.df <- coefs.df %>%
+  mutate(Tin_200 = B0 + B1*200+B2*300+B3*300*200,
+         Tin_300 = B0 + B1*300+B2*300+B3*300*300,
+         Tin_310 = B0 + B1*310+B2*300+B3*300*310,
+         Tin_390 = B0 + B1*390+B2*300+B3*300*390,
+         Tin_400 = B0 + B1*400+B2*300+B3*300*400,
+         Tin_500 = B0 + B1*500+B2*300+B3*300*500,
+         Tin_600 = B0 + B1*600+B2*300+B3*300*600) #%>%
+  # select(B0,B1,B2,B3,Tin_200, Tin_300, Tin_310, Tin_350, Tin_375, Tin_390,Tin_400, Tin_500, Tin_600)
+
+## turn coefs.df long for ggplot
+fitted_vals <- coefs.df %>%
+  select(Tin_200, Tin_300, Tin_400,Tin_500,Tin_600) %>%
+  mutate(Time = row_number()) %>%
+  pivot_longer(Tin_200:Tin_600, names_to = "Tin_Group", values_to = "Concentration_HAT")
+
+third_plot <- data_Tc_sp$`300` %>%
+  select(time, concentrationA, Tin_group) %>%
+  pivot_wider(names_from = Tin_group, values_from = concentrationA) %>%
+  mutate(time2 = row_number()) %>%
+  filter(time2 <= 151)
+
+fitted_third_plot <- coefs.df %>%
+  mutate(Time = row_number()) %>%
+  select(Time, Tin_300, Tin_310, Tin_390, Tin_400)
+
+
+
+### Plot 1
+data_Tc_sp$`300` %>%
+  ggplot(aes(x=time,y=concentrationA, col = Tin_group, group = Replicate)) +
+    geom_line() +
+    xlim(0,15) + 
+    ggtitle("Tc = 300")
+
+### Plot 2
+fitted_vals %>%
+  ggplot(aes(x=Time, y=Concentration_HAT, color=Tin_Group, group=Tin_Group)) + 
+  geom_line() + 
+  ggtitle("Fitted Values, Tc = 300") + ylim(0,0.8)
+
+### Plot 3
+plot(third_plot$time2, third_plot$`300`, type = "l", ylim = c(0,0.8))
+lines(third_plot$time2, third_plot$`400`,col="blue")
+lines(fitted_third_plot$Time, fitted_third_plot$Tin_310, col = "red")
+#lines(fitted_third_plot$Time, fitted_third_plot$Tin_350, col = "green")
+lines(fitted_third_plot$Time, fitted_third_plot$Tin_390, col = "magenta")
+legend("topright", 
+       legend = c("True Tin 300", "Fitted Tin 310", "Fitted Tin 350", "Fitted Tin 390", "True Tin 400"),
+       fill = c("black", "red", "green","magenta", "blue"))
+title(main = "Comparing True and Fitted Values, Tc = 300")
+grid()
+
+
+
+  
+
+```
+
+
+### everything else below is the same process as shown above on a different dataset
+```{r fitted values using eval.fd no interaction}
+# 
+# 
+# f_NoInt_B0 <- eval.fd(0:150, f_Interaction$betaestlist$const$fd)
+# f_NoInt_B1 <- eval.fd(0:150, f_Interaction$betaestlist$Tin$fd)
+# f_NoInt_B2 <- eval.fd(0:150, f_Interaction$betaestlist$Tc$fd)
+# #f_Int_B3 <- eval.fd(0:150, f_Interaction$betaestlist$Tin_Tc$fd)
+# coefs.df <- data.frame(B0 = f_Int_B0,
+#                        B1 = f_Int_B1,
+#                        B2 = f_Int_B2
+#                        #B3 = f_Int_B3
+#                        )
+# 
+# coefs.df <- coefs.df %>%
+#   mutate(Tin_400 = B0 + B1*400+B2*300+B3*300*400)
+# 
+# 
+# #g[[5]]
+# coefs.df <- coefs.df %>%
+#   mutate(Tin_200 = B0 + B1*200+B2*300+B3*300*200,
+#          Tin_300 = B0 + B1*300+B2*300+B3*300*300,
+#          Tin_310 = B0 + B1*310+B2*300+B3*300*310,
+#          Tin_390 = B0 + B1*390+B2*300+B3*300*390,
+#          Tin_400 = B0 + B1*400+B2*300+B3*300*400,
+#          Tin_500 = B0 + B1*500+B2*300+B3*300*500,
+#          Tin_600 = B0 + B1*600+B2*300+B3*300*600) %>%
+#   select(B0,B1,B2,B3,Tin_200, Tin_300, Tin_310, Tin_350, Tin_375, Tin_390,Tin_400, Tin_500, Tin_600)
+# 
+# fitted_vals <- coefs.df %>%
+#   select(Tin_200, Tin_300, Tin_400,Tin_500,Tin_600) %>%
+#   mutate(Time = row_number()) %>%
+#   pivot_longer(Tin_200:Tin_600, names_to = "Tin_Group", values_to = "Concentration_HAT")
+# 
+# third_plot <- data_Tc_sp$`300` %>%
+#   select(time, concentrationA, Tin_group) %>%
+#   pivot_wider(names_from = Tin_group, values_from = concentrationA) %>%
+#   mutate(time2 = row_number()) %>%
+#   filter(time2 <= 151)
+# 
+# fitted_third_plot <- coefs.df %>%
+#   mutate(Time = row_number()) %>%
+#   select(Time, Tin_300, Tin_310, Tin_350, Tin_390, Tin_400)
+# 
+# 
+# 
+# ### Plot 1
+# data_Tc_sp$`300` %>%
+#   ggplot(aes(x=time,y=concentrationA, col = Tin_group, group = Replicate)) +
+#     geom_line() +
+#     xlim(0,15) + 
+#     ggtitle("Tc = 300")
+# 
+# ### Plot 2
+# fitted_vals %>%
+#   ggplot(aes(x=Time, y=Concentration_HAT, color=Tin_Group, group=Tin_Group)) + 
+#   geom_line() + 
+#   ggtitle("Fitted Values, Tc = 300") + ylim(0,0.8)
+# 
+# ### Plot 3
+# plot(third_plot$time2, third_plot$`300`, type = "l", ylim = c(0,0.8))
+# lines(third_plot$time2, third_plot$`400`,col="blue")
+# lines(fitted_third_plot$Time, fitted_third_plot$Tin_310, col = "red")
+# lines(fitted_third_plot$Time, fitted_third_plot$Tin_350, col = "green")
+# lines(fitted_third_plot$Time, fitted_third_plot$Tin_390, col = "magenta")
+# legend("topright", 
+#        legend = c("True Tin 300", "Fitted Tin 310", "Fitted Tin 350", "Fitted Tin 390", "True Tin 400"),
+#        fill = c("black", "red", "green","magenta", "blue"))
+# title(main = "Comparing True and Fitted Values, Tc = 300")
+# grid()
+# 
+# 
+# third_plot <- data_Tc_sp$`300` %>%
+#   select(time, concentrationA, Tin_group) %>%
+#   pivot_wider(names_from = Tin_group, values_from = concentrationA) %>%
+#   mutate(time2 = row_number()) %>%
+#   filter(time2 <= 151) #%>%
+#   # pivot_longer(`200`:`600`, names_to = "Raw_Tin", values_to = "Concentration") %>% 
+#   # bind_cols(fitted_vals)
+# 
+# 
+#   
+# 
+```
+
+
+
+```{r create noisier dataset}
+
+data <- "/mnt/DATA/Tin Variation/Tc300_Tin200to600_25runs22Jul2022.csv" %>% read.csv()
+
+head(data)
+data$concentrationA <- data$concentrationA + rnorm(5001,0,0.005)
+data$coolingTemp <- data$coolingTemp + rnorm(5001,0,2)
+data$Temp_inlet <- data$Temp_inlet + rnorm(5001,0,2)
+
+write.csv(data, "/mnt/DATA/Tin Variation/Tc300_Tin200to600_25runs_cA_Noise22Jul2022.csv")
+
+```
+
+
+
+```{r Tc only around 300}
+
+data <- "/mnt/DATA/Tin Variation/Tc300_Tin200to600_25runs22Jul2022.csv" %>% read.csv()
+
+data$Replicate <- factor(data$Replicate, levels = unique(data$Replicate))
+data$Tin_group <- str_split_fixed(data$Replicate, fixed("_"), n=3)[,1] %>% str_sub(2,-2) 
+data$Tc_group <- str_split_fixed(data$Replicate, fixed("_"),n=3)[,2] %>% str_sub(2,-2) 
+ 
+
+Tc2 <- (Tc-mean(Tc))/sqrt(var(Tc))
+data <- data %>%                             
+  group_by(Replicate) %>%
+  mutate(time2 = row_number())
+
+data %>%
+  ggplot(aes(x=time2, y = concentrationA, color=as.factor(Tin_group), group = Replicate)) + 
+  geom_line() + 
+  xlim(0,150) ## add title
+
+data_con <- data %>%
+  select(time, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+reps <- unique(data$Replicate)
+Tin <- unique(data$Tin_group) %>% as.numeric() #%>% round(0) %>% as.factor()
+Tc <- unique(data$Tc_group) %>% as.numeric() #%>% round(0) %>% as.factor()
+
+#Tin_Tc <- (unique(data$Tin_group) %>% as.numeric) * (unique(data$Tc_group) %>% as.numeric()) %>% round(0)
+Tin_Tc <- Tin * Tc2
+
+
+#Tin_Tc <- as.factor(Tin_Tc)
+
+#### create basis
+basis <- create.bspline.basis(rangeval = c(0,150), nbasis = 50)
+
+data_con_fda <- smooth.basis(argvals = 1:150,data_con[1:150,-1] %>% as.matrix(),basis)$fd
+
+plot(data_con_fda)
+
+
+#f_Interaction <- fRegress(data_con_fda ~ as.factor(Tin) + as.factor(Tc) )
+
+f_Interaction <- fRegress(data_con_fda ~ Tin + Tc2 + Tin_Tc)
+f_Interaction <- fRegress(data_con_fda ~ Tin )
+
+
+
+
+
+par(mfrow=c(2,2))
+plot(f_Interaction$betaestlist$const, xlim = c(0,150)); title(main="B0")
+plot(f_Interaction$betaestlist$Tin, xlim = c(0,150)); title(main="B1")
+
+plot(f_Interaction$betaestlist$Tc, xlim=c(0,150)); title(main="B2")
+plot(f_Interaction$yhatfdobj, xlim = c(0,150), ylim=c(0,0.9)); title(main="Yhat")
+plot(f_Interaction$betaestlist$Tin_Tc, xlim = c(0,150)); title(main="B3")
+
+
+```

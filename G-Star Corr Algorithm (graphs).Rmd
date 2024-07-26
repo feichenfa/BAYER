@@ -1,0 +1,339 @@
+---
+title: "G-Star Corr Algorithm"
+author: "Rohan Mishra"
+date: "9/7/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+library(HMPTrees)
+library(data.table)
+library(tidyverse)
+library(akima)
+options(scipen=9999)
+
+
+timeSplit4 <- function(data, secs = 7200, rows = 604800) {
+  data <- data[1:rows,]
+  #data <- data %>% select(sensors)
+  data$TimeGroup <- cut(1:dim(data)[1], seq(0, dim(data)[1], secs), labels = FALSE)
+  #data$SPO2 <- data$SPO2 + runif(dim(data)[1], -.1, .1)
+  data.split <- split(data, f = data$TimeGroup)
+  return(data.split)
+}
+
+
+```
+
+```{r Sensor Plots}
+
+data <- fread("/mnt/DATA/Fei/cstr_functional_ontology_synethic_08242022.csv")
+
+par(mfrow=c(3,2))
+plot(data$concentrationA, type = "l", main = "Concentration of A");grid();abline(v=seq(0,5000,by=50)); 
+plot(data$Temp, type = "l", main = "Reactor Temperature");grid();abline(v=seq(0,5000,by=50))
+
+plot(data$coolingTemp, type = "l", main = "Cooling Temperature");grid();abline(v=seq(0,5000,by=50))
+plot(data$Temp_inlet, type = "l", main = "Inlet Temperature");grid();abline(v=seq(0,5000,by=50))
+lines(smooth.spline(data$Temp_inlet, spar = 0.2), col = "red", lwd=2)
+
+plot(data$flowRate, type = "l", main = "Flow Rate");grid();abline(v=seq(0,5000,by=50))
+lines(smooth.spline(data$flowRate, spar = 0.2), col = "red", lwd = 2)
+plot(data$concentrationA_inlet, type = "l", main = "Inlet Concentration of A");grid();abline(v=seq(0,5000,by=50))
+lines(smooth.spline(data$concentrationA_inlet, spar = 0.2), col = "red", lwd = 2)
+
+
+
+```
+
+
+```{r Normal Data}
+
+
+
+MLE.normal <- data %>% 
+  dplyr::filter(Mode == "Normal") %>%
+  timeSplit4(secs = 50, rows = 4500) %>%
+  lapply(function(i) {
+    i %>% 
+    dplyr::select(concentrationA_inlet, Temp_inlet, flowRate, concentrationA, Temp)
+  }) %>%
+  lapply(cor) %>%
+  lapply(function(i){
+    cordf <- as.data.frame(as.table(i)) 
+    combinations = combn( colnames(i) , 2 , FUN = function(x) { paste(x, collapse = "_" )})
+    cordf = cordf[ cordf$Var1 != cordf$Var2 , ]
+    cordf = cordf[ paste( cordf$Var1 , cordf$Var2 , sep = "_" ) %in% combinations , ]
+    cordf$Vars <- paste(cordf$Var1,cordf$Var2, sep = "_:_")
+    cordf <- cordf %>% select(Vars, Freq)
+  }) %>%
+  imap(.x = ., ~ set_names(.x, c("Vars", .y))) %>% 
+  reduce(dplyr::inner_join, by = "Vars") %>%
+  column_to_rownames(var = "Vars") %>%
+  getMLEandLoglike()
+
+round(MLE.normal$mle,2)
+
+
+```
+
+
+```{r Abnormal Data, echo=FALSE}
+
+
+MLE.abnormal <- data %>% 
+  filter(Mode == "Abnormal") %>%
+  timeSplit4(secs = 50, rows = 500) %>%
+  lapply(function(i) {
+    i %>% 
+    dplyr::select(concentrationA_inlet, Temp_inlet, flowRate, concentrationA, Temp)
+  }) %>%
+  lapply(cor) %>%
+  lapply(function(i){
+    cordf <- as.data.frame(as.table(i)) 
+    combinations = combn( colnames(i) , 2 , FUN = function(x) { paste(x, collapse = "_" )})
+    cordf = cordf[ cordf$Var1 != cordf$Var2 , ]
+    cordf = cordf[ paste( cordf$Var1 , cordf$Var2 , sep = "_" ) %in% combinations , ]
+    cordf$Vars <- paste(cordf$Var1,cordf$Var2, sep = "_:_")
+    cordf <- cordf %>% select(Vars, Freq)
+  }) %>%
+  imap(.x = ., ~ set_names(.x, c("Vars", .y))) %>% 
+  reduce(dplyr::inner_join, by = "Vars") %>%
+  column_to_rownames(var = "Vars") %>%
+  getMLEandLoglike()
+
+
+round(MLE.abnormal$mle,2)
+
+
+```
+
+```{r All Data}
+
+
+MLE.all <- data %>%
+  timeSplit4(secs = 50, rows = 5000) %>%
+  lapply(function(i) {
+    i %>% 
+    dplyr::select(concentrationA_inlet, Temp_inlet, flowRate, concentrationA, Temp)
+  }) %>%
+  lapply(cor) %>%
+  lapply(function(i){
+    cordf <- as.data.frame(as.table(i)) 
+    combinations = combn( colnames(i) , 2 , FUN = function(x) { paste(x, collapse = "_" )})
+    cordf = cordf[ cordf$Var1 != cordf$Var2 , ]
+    cordf = cordf[ paste( cordf$Var1 , cordf$Var2 , sep = "_" ) %in% combinations , ]
+    cordf$Vars <- paste(cordf$Var1,cordf$Var2, sep = "_:_")
+    cordf <- cordf %>% select(Vars, Freq)
+  }) %>%
+  imap(.x = ., ~ set_names(.x, c("Vars", .y))) %>% 
+  reduce(dplyr::inner_join, by = "Vars") %>%
+  column_to_rownames(var = "Vars") %>%
+  getMLEandLoglike()
+
+gstar_3 <- round(cbind(MLE.all$mle, MLE.normal$mle, MLE.abnormal$mle),2) %>%
+  as.data.frame()## relabel columns!!
+colnames(gstar_3) <- c("All", "Normal", "Abnormal")
+gstar_3
+
+```
+
+
+
+```{r GStar for each group of 10 graphs}
+
+new_cors <- data %>%
+  timeSplit4(secs = 50, rows = 5000) %>%
+  lapply(function(i) {
+    i %>% 
+    dplyr::select(concentrationA_inlet, Temp_inlet, flowRate, concentrationA, Temp)
+  }) %>%
+  lapply(cor) %>%
+  lapply(function(i){
+    cordf <- as.data.frame(as.table(i)) 
+    combinations = combn( colnames(i) , 2 , FUN = function(x) { paste(x, collapse = "_" )})
+    cordf = cordf[ cordf$Var1 != cordf$Var2 , ]
+    cordf = cordf[ paste( cordf$Var1 , cordf$Var2 , sep = "_" ) %in% combinations , ]
+    cordf$Vars <- paste(cordf$Var1,cordf$Var2, sep = "_:_")
+    cordf <- cordf %>% select(Vars, Freq)
+  }) %>%
+  imap(.x = ., ~ set_names(.x, c("Vars", .y))) %>% 
+  reduce(dplyr::inner_join, by = "Vars") %>%
+  column_to_rownames(var = "Vars")
+
+
+
+#check newcors
+#dim(new_cors)
+MLEs <- list()
+for(i in 1:10){
+  selCols <- 1:10 + (i-1)*10
+  new_cors2 <- new_cors[,selCols]
+  m <- getMLEandLoglike(new_cors2)
+  MLEs[[i]] <- m
+}
+
+MLE_table <- lapply(MLEs, function(i) { 
+  i$mle %>% as.data.frame() %>% rownames_to_column(var="Corr")
+  }) %>%
+  imap(.x = ., ~ set_names(.x, c("Corr", .y))) %>%
+  reduce(dplyr::inner_join, by = "Corr") %>%
+  column_to_rownames(var = "Corr")
+
+gstar10 <- as.data.frame(round(MLE_table, 2))
+#colnames(gstar10) <- c("")
+
+
+
+par(mfrow=c(3,2))
+plot(data$concentrationA, type = "l", main = "Concentration of A");grid();abline(v=seq(0,5000,by=500)); 
+plot(data$Temp, type = "l", main = "Reactor Temperature");grid();abline(v=seq(0,5000,by=500))
+
+plot(data$coolingTemp, type = "l", main = "Cooling Temperature");grid();abline(v=seq(0,5000,by=500))
+plot(data$Temp_inlet, type = "l", main = "Inlet Temperature");grid();abline(v=seq(0,5000,by=500))
+lines(smooth.spline(data$Temp_inlet, spar = 0.2), col = "red", lwd=2)
+
+plot(data$flowRate, type = "l", main = "Flow Rate");grid();abline(v=seq(0,5000,by=500))
+lines(smooth.spline(data$flowRate, spar = 0.2), col = "red", lwd = 2)
+plot(data$concentrationA_inlet, type = "l", main = "Inlet Concentration of A");grid();abline(v=seq(0,5000,by=500))
+lines(smooth.spline(data$concentrationA_inlet, spar = 0.2), col = "red", lwd = 2)
+
+
+
+
+
+
+
+```
+
+```{r LRT}
+
+pval <- compareTwoDataSets(new_cors[c(1:80,91:100)] , new_cors[81:90], numPerms = 1000)
+pval
+
+
+```
+
+
+
+```{r RPart}
+
+test <- rpart(coolingTemp ~ corMatrix) #pseudocode
+
+source("/repos/GibbsOODA/WorkingCode/Code/ooda Functions.R")
+
+covars <- rep(c(unique(data$coolingTemp),300),each=10) %>% as.data.frame()
+covars = data.frame(Cooling_Temp = rep(c(unique(data$coolingTemp),300), each = 10),
+                    Mode = c(rep("Normal", 80), rep("Abnormal",10), rep("Normal",10))#,
+                    #Mean_Ca = data %>%
+                      #group_by()
+                    )
+
+
+colnames(covars) = c("Cooling_Temp", "Mode")
+
+new_cors_t <- new_cors %>% t() %>% as.data.frame()
+
+gibbs_testCV <- gibbsRpartCV(new_cors, covars = covars,minsplit = 1,
+                           minbucket = 1,parallel = FALSE,cores = detectCores(),
+                           numCV = 20,use1SE = TRUE, lowerSE = FALSE)
+
+gibbs_test <- gibbsRpartBase(new_cors, covars = covars,minsplit = 1,
+                           minbucket = 1)
+
+
+
+```
+
+
+   1. graph ~ temp +/- .1
+  2.  graph ~ temp (untweaked) + Normal/Abnormal class
+    graph ~ temp (untweaked) + Norm/Abnorm/KindaAbnorm
+    model 2 & 3 with the average ConcA for each graph (recall, each graph is the correlations of 50 rows - each row has a ConcA, use the average of the 50 ConcA)
+
+```{r RPart Experiments}
+par(mfrow=c(1,1))
+#1. graph ~ temp +/- .1
+covars_1 = data.frame(Cooling_Temp = rep(c(unique(data$coolingTemp),300), each = 10))
+covars_1$Cooling_Temp <- covars$Cooling_Temp + rnorm(100,0,0.3)
+
+par(mfrow=c(2,1))
+gibbs_CV_1 <- gibbsRpartCV(new_cors, covars = covars_1,minsplit = 1,
+                           minbucket = 1,parallel = FALSE,cores = detectCores(),
+                           numCV = 20,use1SE = TRUE, lowerSE = FALSE)  ###does not run
+
+
+gibbs_base_1 <- gibbsRpartBase(new_cors, covars = covars_1,minsplit = 1,
+                           minbucket = 1)   ### OVERWHELMING NUMBER OF NODES
+
+
+#2: graph ~ temp (untweaked) + Normal/Abnormal class
+covars_2 = data.frame(Cooling_Temp = rep(c(unique(data$coolingTemp),300), each = 10),
+                    Mode = c(rep("Normal", 80), rep("Abnormal",10), rep("Normal",10)))
+
+gibbs_CV_2 <- gibbsRpartCV(new_cors, covars = covars_2,minsplit = 1,
+                           minbucket = 1,parallel = FALSE,cores = detectCores(),
+                           numCV = 20,use1SE = TRUE, lowerSE = FALSE)  ###does not run
+
+
+gibbs_base_2 <- gibbsRpartBase(new_cors, covars = covars_2,minsplit = 1,
+                           minbucket = 1)   ### gives same result as original Rpart??
+
+#3: graph ~ temp (untweaked) + Norm/Abnorm/KindaAbnorm
+covars_3 = data.frame(Mode = c(rep("Normal", 70), rep("Kind of Abnormal",10),rep("Abnormal",10), rep("Normal",10)),
+                      Cooling_Temp = rep(c(unique(data$coolingTemp),300), each = 10))
+
+gibbs_CV_3 <- gibbsRpartCV(new_cors, covars = covars_3,minsplit = 1,
+                           minbucket = 1,parallel = FALSE,cores = detectCores(),
+                           numCV = 20,use1SE = TRUE, lowerSE = FALSE)  ###does not run
+
+
+gibbs_base_3 <- gibbsRpartBase(new_cors, covars = covars_3,minsplit = 1,
+                           minbucket = 1)   ### gives same result as original Rpart??
+
+#4: model 2 & 3 with the average ConcA for each graph (recall, each graph is the correlations of 50 rows - each row has a ConcA, use the average of the 50 ConcA)
+
+data$Group <- c(rep(1:100, each = 50), 100)
+
+means <- data %>% group_by(Group) %>% summarise(Mean_Ca = mean(concentrationA)) 
+
+
+covars_4 = data.frame(Mode = c(rep("Normal", 70), rep("Kind of Abnormal",10),rep("Abnormal",10), rep("Normal",10)),
+                      Cooling_Temp = rep(c(unique(data$coolingTemp),300), each = 10),
+                      Mean_Ca = means$Mean_Ca)
+
+gibbs_CV_4 <- gibbsRpartCV(new_cors, covars = covars_4,minsplit = 1,
+                           minbucket = 1,parallel = FALSE,cores = detectCores(),
+                           numCV = 20,use1SE = TRUE, lowerSE = FALSE)  
+
+
+gibbs_base_4 <- gibbsRpartBase(new_cors, covars = covars_4,minsplit = 1,
+                           minbucket = 1)   ### gives same result as original Rpart??
+
+tree <- rpart::prune(gibbs_CV_4$fullTree, cp = gibbs_CV_4$cpTable$CP[4])
+rpart.plot(tree, extra=101, shadow.col="gray", type=4, clip.right.labs=FALSE, roundint = FALSE)
+
+
+```
+
+```{r Sampling}
+
+
+pvalStor <- NULL
+for(i in 1:1000) {
+  x <- new_cors
+  grp = sample(1:100, 25, replace = TRUE)
+  x1 <- x[,grp]
+  grp2 <- sample(1:100,25,replace = TRUE)
+  x2 <- x[,grp2]
+ 
+  p <- compareTwoDataSets(x1, x2, numPerms = 100)
+  pvalStor[[i]] <- p
+}
+
+hist(pvalStor)
+
+```

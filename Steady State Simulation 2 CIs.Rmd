@@ -1,0 +1,190 @@
+---
+title: "Steady State Simulation 2 CIs"
+author: "Rohan Mishra"
+date: "6/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+library(fda)
+library(tidyverse)
+library(deSolve)
+source("/mnt/fda_CI.R")
+
+```
+
+## Simulated Data
+
+Steady state ODE data was generated adding noise to temperature. Adding noise to instantaneous collision rate resulted in concentration increasing so am still trying to resolve this in the *R DeSolve* package.
+
+The two simulated datsets used $Temperature \in \{275, 280, 285\}$
+
+```{r ODE1, echo=FALSE}
+
+# ODE with collision rate noise added
+SIR.noise <- function(time, state, parameters) {
+  with(as.list(c(state, parameters)),
+       {
+         dCdt = -k  * C
+         return(list(c(dCdt))) 
+       })}
+
+
+# Arrehenius equation
+A = 7.2e10
+E = 72751.96
+R = 8.31451
+T = 400
+
+k.arrhenius = function(A, E, R, T) {A*exp(1)^(-E/(R*T))}
+
+
+# Generate and plot data
+state <- c(C=1) #initial conditions for odes
+time <-seq(from = 0, to = 5000, length.out = 5001)
+
+
+# Noise N(0,1) on temp
+result.1 = NULL
+for(Temp in c(275, 280, 285)) {
+  for(T in round(Temp + rnorm(10, 0, 1), 4)) {
+    k = k.arrhenius(A,E,R,T)
+    out.test = ode(y=state, 
+                   times=time,
+                   func=SIR.noise, 
+                   parms=c(k = k))
+    result.1 = rbind(result.1, cbind(k=k, Temp=Temp, T=T, out.test))
+  }
+}
+
+result.df = as.data.frame(result.1)
+result.df$Temp = as.factor(result.df$Temp)
+result.df %>%
+  filter(Temp != 280) %>%
+  ggplot( aes(x=time, y=C, group=T, color=Temp)) +
+    geom_line() +
+    ggtitle('Temperature Noise ~N(0, 1)') +
+   # scale_y_continuous(trans='log10') +
+    ylim(c(0,1)) +
+    ylab('Concentration') +
+    xlab('Time')
+
+
+# Noise N(0,2) on temp
+result.2 = NULL
+for(Temp in c(275, 280, 285)) {
+  for(T in round(Temp + rnorm(10, 0,5), 4)) {
+    k = k.arrhenius(A,E,R,T)
+    out.test = ode(y=state, 
+                   times=time,
+                   func=SIR.noise, 
+                   parms=c(k = k))
+    result.2 = rbind(result.2, cbind(k=k, Temp=Temp, T=T, out.test))
+  }
+}
+
+result.df2 = as.data.frame(result.2)
+result.df2$Temp = as.factor(result.df2$Temp)
+# ggplot(result.df2, aes(x=time, y=C, group=T, color=Temp)) +
+#   geom_line() +
+#   ggtitle('Temperature Noise ~N(0, 5)') +
+#  # scale_y_continuous(trans='log10') +
+#   ylim(c(0,1)) +
+#   ylab('Concentration') +
+#   xlab('Time')
+
+```
+
+```{r fda, include = FALSE}
+
+r1 <- result.df %>% 
+  split(f = result.df$Temp)
+
+r2 <- result.df2 %>% 
+  split(f = result.df$Temp)
+
+#### pivot these wider amd make into functional objects
+r1_275_wide <- r1$`275` %>%
+  select(!k) %>%
+  pivot_wider(names_from = T, values_from = C)
+
+basis <- create.bspline.basis(rangeval = c(0,5001), nbasis = 10)
+
+r1_275_fd <- smooth.basis(argvals = 1:5001, y = r1_275_wide[,-c(1,2)] %>% as.matrix(), fdParobj = basis)
+
+
+
+fd_list_1 <- lapply(r1, function(i){
+  i_wide <- i %>%
+    select(!k) %>%
+    pivot_wider(names_from = T, values_from = C)
+  
+  fd_obj <- smooth.basis(argvals = 1:5001, y = i_wide[,-c(1,2)] %>% as.matrix(), fdParobj = basis)
+})
+
+plot(fd_list_1$`275`, type = "l", col = "black", ylab = "Concentration")
+lines(fd_list_1$`275`, col = "black")
+
+lines(fd_list_1$`285`, col = "red")
+abline(h=0);grid()
+title(main = "Simulated Functional Data- Noise ~ N(0,1)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"))
+
+fd_list_2 <- lapply(r2, function(i){
+  i_wide <- i %>%
+    select(!k) %>%
+    pivot_wider(names_from = T, values_from = C)
+  
+  fd_obj <- smooth.basis(argvals = 1:5001, y = i_wide[,-c(1,2)] %>% as.matrix(), fdParobj = basis)
+})
+
+plot(fd_list_2$`275`, type = "l", col = "black", ylab = "Concentration")
+lines(fd_list_2$`275`, col = "black")
+lines(fd_list_2$`285`, col = "red")
+abline(h=0);grid()
+title(main = "Simulated Functional Data- Noise ~ N(0,5)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"))
+
+
+```
+
+
+```{r mean CI, include=FALSE}
+
+
+CI_1 <- lapply(fd_list_1, function(i) fda_CI(i$fd, basis = basis, n_curves = 10, plot = FALSE))
+
+CI_2 <- lapply(fd_list_2, function(i) fda_CI(i$fd, basis = basis, n_curves = 10, plot = FALSE))
+
+
+```
+
+
+```{r plot mean CI, include = FALSE}
+
+plot(CI_1$`275`$mean, type = "l"); grid()
+lines(CI_1$`275`$CI_upper, lty = 3, col = "black")
+lines(CI_1$`275`$CI_lower, lty = 3, col = "black")
+lines(CI_1$`285`$mean, type = "l", col = "red")
+lines(CI_1$`285`$CI_lower, lty = 3, col = "red")
+lines(CI_1$`285`$CI_upper, lty = 3, col = "red")
+abline(h=0)
+title(main="Functional Mean & CI- Noise N(0,1)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"), cex = 0.75)
+
+
+
+
+plot(CI_2$`275`$mean, type = "l"); grid()
+lines(CI_2$`275`$CI_upper, lty = 3, col = "black")
+lines(CI_2$`275`$CI_lower, lty = 3, col = "black")
+lines(CI_2$`285`$mean, type = "l", col = "red")
+lines(CI_2$`285`$CI_lower, lty = 3, col = "red")
+lines(CI_2$`285`$CI_upper, lty = 3, col = "red")
+abline(h=0)
+title(main="Functional Mean & CI- Noise N(0,5)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"), cex = 0.75)
+
+```

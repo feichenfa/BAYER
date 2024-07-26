@@ -1,0 +1,223 @@
+---
+title: "Steady State Simulation 2 FDA"
+author: "Rohan Mishra"
+date: "5/25/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(deSolve)
+source("/mnt/fda_CI.R")
+
+```
+
+
+
+```{r ODE1, echo=FALSE}
+
+# ODE with collision rate noise added
+SIR.noise <- function(time, state, parameters) {
+  with(as.list(c(state, parameters)),
+       {
+         dCdt = -k  * C
+         return(list(c(dCdt))) 
+       })}
+
+
+# Arrehenius equation
+A = 7.2e10
+E = 72751.96
+R = 8.31451
+T = 400
+
+k.arrhenius = function(A, E, R, T) {A*exp(1)^(-E/(R*T))}
+
+
+# Generate and plot data
+state <- c(C=1) #initial conditions for odes
+time <-seq(from = 0, to = 5000, length.out = 5001)
+
+
+# Noise N(0,1) on temp
+result.1 = NULL
+for(Temp in c(275, 285)) {
+  for(T in round(Temp + rnorm(10, 0, 1), 4)) {
+    k = k.arrhenius(A,E,R,T)
+    out.test = ode(y=state, 
+                   times=time,
+                   func=SIR.noise, 
+                   parms=c(k = k))
+    result.1 = rbind(result.1, cbind(k=k, Temp=Temp, T=T, out.test))
+  }
+}
+
+result.df = as.data.frame(result.1)
+result.df$Temp = as.factor(result.df$Temp)
+ggplot(result.df, aes(x=time, y=C, group=T, color=Temp)) +
+  geom_line() +
+  ggtitle('Temperature Noise ~N(0, 1)') +
+ # scale_y_continuous(trans='log10') +
+  ylim(c(0,1)) +
+  ylab('Concentration') +
+  xlab('Time')
+
+
+# Noise N(0,2) on temp
+result.2 = NULL
+for(Temp in c(275, 285)) {
+  for(T in round(Temp + rnorm(10, 0,5), 4)) {
+    k = k.arrhenius(A,E,R,T)
+    out.test = ode(y=state, 
+                   times=time,
+                   func=SIR.noise, 
+                   parms=c(k = k))
+    result.2 = rbind(result.2, cbind(k=k, Temp=Temp, T=T, out.test))
+  }
+}
+
+result.df2 = as.data.frame(result.2)
+result.df2$Temp = as.factor(result.df2$Temp)
+ggplot(result.df2, aes(x=time, y=C, group=T, color=Temp)) +
+  geom_line() +
+  ggtitle('Temperature Noise ~N(0, 5)') +
+ # scale_y_continuous(trans='log10') +
+  ylim(c(0,1)) +
+  ylab('Concentration') +
+  xlab('Time')
+
+```
+
+## Converting to Functional Data
+
+When converting to functional data, data matrices go away. The data is now represented by basis functions and coefficients. We can use this form to provide some powerful analyses. Below is a demonstration of calculating descriptive statistics with these functions.
+
+
+```{r fda}
+
+r1 <- result.df %>% 
+  split(f = result.df$Temp)
+
+r2 <- result.df2 %>% 
+  split(f = result.df$Temp)
+
+#### pivot these wider amd make into functional objects
+r1_275_wide <- r1$`275` %>%
+  select(!k) %>%
+  pivot_wider(names_from = T, values_from = C)
+
+basis <- create.bspline.basis(rangeval = c(0,5001), nbasis = 10)
+
+r1_275_fd <- smooth.basis(argvals = 1:5001, y = r1_275_wide[,-c(1,2)] %>% as.matrix(), fdParobj = basis)
+
+
+
+fd_list_1 <- lapply(r1, function(i){
+  i_wide <- i %>%
+    select(!k) %>%
+    pivot_wider(names_from = T, values_from = C)
+  
+  fd_obj <- smooth.basis(argvals = 1:5001, y = i_wide[,-c(1,2)] %>% as.matrix(), fdParobj = basis)
+})
+
+plot(fd_list_1$`275`, type = "l", col = "black", ylab = "Concentration")
+lines(fd_list_1$`275`, col = "black")
+
+lines(fd_list_1$`285`, col = "red")
+abline(h=0);grid()
+title(main = "Simulated Functional Data- Noise ~ N(0,1)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"))
+
+fd_list_2 <- lapply(r2, function(i){
+  i_wide <- i %>%
+    select(!k) %>%
+    pivot_wider(names_from = T, values_from = C)
+  
+  fd_obj <- smooth.basis(argvals = 1:5001, y = i_wide[,-c(1,2)] %>% as.matrix(), fdParobj = basis)
+})
+
+plot(fd_list_2$`275`, type = "l", col = "black", ylab = "Concentration")
+lines(fd_list_2$`275`, col = "black")
+lines(fd_list_2$`285`, col = "red")
+abline(h=0);grid()
+title(main = "Simulated Functional Data- Noise ~ N(0,5)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"))
+
+
+```
+
+Now that we have the functional data, we can calculate the *mean curve with 95% confidence bands* over the entire span of time with a simple call to each function.
+
+
+```{r mean CI, echo=TRUE}
+
+
+CI_1 <- lapply(fd_list_1, function(i) fda_CI(i$fd, basis = basis, n_curves = 10, plot = FALSE))
+
+CI_2 <- lapply(fd_list_2, function(i) fda_CI(i$fd, basis = basis, n_curves = 10, plot = FALSE))
+
+
+```
+
+
+```{r plot mean CI, echo = FALSE}
+
+plot(CI_1$`275`$mean, type = "l"); grid()
+lines(CI_1$`275`$CI_upper, lty = 3, col = "black")
+lines(CI_1$`275`$CI_lower, lty = 3, col = "black")
+lines(CI_1$`285`$mean, type = "l", col = "red")
+lines(CI_1$`285`$CI_lower, lty = 3, col = "red")
+lines(CI_1$`285`$CI_upper, lty = 3, col = "red")
+abline(h=0)
+title(main="Functional Mean & CI- Noise N(0,1)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"), cex = 0.75)
+
+
+
+
+plot(CI_2$`275`$mean, type = "l"); grid()
+lines(CI_2$`275`$CI_upper, lty = 3, col = "black")
+lines(CI_2$`275`$CI_lower, lty = 3, col = "black")
+lines(CI_2$`285`$mean, type = "l", col = "red")
+lines(CI_2$`285`$CI_lower, lty = 3, col = "red")
+lines(CI_2$`285`$CI_upper, lty = 3, col = "red")
+abline(h=0)
+title(main="Functional Mean & CI- Noise N(0,5)")
+legend("topright", legend = c("275", "285"), fill = c("black", "red"), cex = 0.75)
+
+```
+
+Our next step is to conduct a functional regression on the simulated data. Below is an example done on Canadian Weather Data.
+
+
+```{r fRegress Example}
+
+daybasis65 <- create.fourier.basis(rangeval=c(0, 365), nbasis=65,
+                                   axes=list('axesIntervals'))
+Temp.fd <- with(CanadianWeather, smooth.basisPar(day.5,
+                                                 dailyAv[,,'Temperature.C'], daybasis65)$fd)
+CanadianWeather$region %>% table()
+plot(Temp.fd); title(main = "Temperature over the Year by City")
+
+TempRgn.f <- fRegress(Temp.fd ~ region, CanadianWeather)
+
+
+```
+
+```{r plot fRegress, echo = FALSE}
+
+plot(TempRgn.f$yhatfdobj$fd, main = "Average Temperature Function by Region")
+par(mfrow=c(2,2))
+plot.fd(TempRgn.f$betaestlist$const$fd); title("Constant for Regression")
+plot.fd(TempRgn.f$betaestlist$region.Atlantic$fd); title("Atlantic Regression Coefficient")
+plot.fd(TempRgn.f$betaestlist$region.Continental$fd); title("Continental Regression Coefficient")
+plot.fd(TempRgn.f$betaestlist$region.Pacific$fd); title("Pacific Regression Coefficient")
+
+
+```
+

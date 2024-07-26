@@ -1,0 +1,315 @@
+---
+title: "Avoiding Edge Effects"
+author: "Rohan Mishra"
+date: "7/29/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE,cache=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(fda)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+source("/mnt/fda_CI.R")
+options(scipen=9999)
+options(max.print = 10000000) 
+
+```
+
+
+Load and plot the data
+```{r Fei's Ranges, echo = FALSE, include=FALSE,cache=TRUE}
+
+data <- "/mnt/DATA/Tin Variation/Tc290Tin320to330_1runEachCombo.csv" %>% read.csv() 
+
+data$Replicate <- factor(data$Replicate, levels = unique(data$Replicate))
+unique(data$Replicate) %>% head()
+
+data$Tin_group <- str_split_fixed(data$Replicate, fixed("_"), n=3)[,1] %>% 
+  #factor() %>% 
+  #str_sub(2,-2) %>% 
+  as.numeric() #%>% 
+ # plyr::round_any(10)
+data$Tc_group <- str_split_fixed(data$Replicate, fixed("_"),n=3)[,2] %>% 
+  #factor() %>% 
+  #str_sub(2,-2) %>% 
+  as.numeric() #%>% 
+  #plyr::round_any(10)
+data <- data %>%
+  group_by(Replicate) %>%
+  mutate(time2 = row_number()#,
+         # Tin_norm = (Tin_group-mean(Tin_group))/sd(Tin_group),
+         # Tc_norm = (Tc_group-mean(Tc_group))/sd(Tc_group)
+         )
+
+head(data) 
+table(data$Tin_group, data$Tc_group)
+
+data %>% 
+  #filter(Tin_group %in% c(500:570)) %>%
+  ggplot(aes(x=time, y = concentrationA, group = Replicate, color = as.factor(Tin_group))) + 
+  geom_line() + xlim(0,10) + scale_y_continuous(trans="log10")
+
+
+
+```
+
+
+
+
+```{r Data for Varying Inputs, echo = FALSE, warning=FALSE, message=FALSE, fig.align='center', tidy=TRUE,cache=TRUE,include=FALSE}
+######
+# ### Grid of Plots
+# data_Tc_sp <- split(data, f=data$Tc_group)
+# 
+# Tcs <- names(data_Tc_sp)
+# 
+# g=NULL
+# g <- list()
+# # for(i in 1:7){
+# #   g[[i]] <- suppressWarnings(( data_Tc_sp[[i]] %>%
+# #      ggplot(aes(x=time2,y=concentrationA, col = Tin_group , group = Replicate)) +
+# #     geom_line() +
+# #     xlim(0,150) +
+# #     ggtitle(paste("Tc = ", as.character(Tcs[[i]]))) ) )
+# # }
+# 
+# i=1
+# for(i in 1:6){
+#   one <- data_Tc_sp[[i]]
+#   one= as.data.frame(one)
+#   one$Replicate= as.character(one$Replicate)
+#   one$Tin_group= as.character(one$Tin_group)
+#   one$Tc_group= as.character(one$Tc_group)
+#   one= subset(one,one$time2 <= 150)
+#   g[[i]]=ggplot(one,aes(x=time2,y=concentrationA, col = Tin_group , group = Replicate)) +
+#     geom_line() +
+#     #xlim(0,150) +
+#     ggtitle(paste("Tc = ", as.character(Tcs[[i]])))  + theme(legend.position = "None")
+# }
+# 
+# g[[1]] <- g[[1]] + theme(legend.position = c(.8, .5),
+#                legend.key.size = unit(.25, 'cm'))
+# 
+# grid.arrange(g[[1]],g[[2]],g[[3]],g[[4]],g[[5]],g[[6]], nrow=3)
+#### everything below is not needed...? ############
+### fRegression
+reps <- data$Replicate %>% unique()
+
+## comment out the chain before as.factor() to make Tin continuous and run continuous fRegression lines
+Tin <-  unique(data$Temp_inlet) %>% as.factor() #%>% plyr::round_any(10) 
+Tc <-  unique(data$Temp_inlet) #%>% plyr::round_any(10) 
+
+Tin_Tc <- Tin * Tc
+
+Tin2 <- (Tin-mean(Tin))/(sd(Tin))
+
+#### Create FDA objects for fRegress
+data_con <- data %>%
+  select(time, concentrationA, Replicate) %>%
+  pivot_wider(names_from = Replicate, values_from = concentrationA)
+
+#### create basis
+basis <- create.bspline.basis(rangeval = c(0,150), nbasis = 50)
+
+data_con_fda <- smooth.basis(argvals = 1:150,data_con[1:150,-1] %>% as.matrix(),basis)$fd
+
+par(mfrow=c(2,1))
+plot(data_con_fda)
+#f_Interaction <- suppressMessages(suppressWarnings( fRegress(data_con_fda ~ Tin + Tc + Tin_Tc)))
+f_Interaction <- fRegress(data_con_fda ~ Tin) 
+
+
+plot(f_Interaction$yhatfdobj)
+
+par(mfrow=c(3,2))
+plot(data_con_fda)
+plot(f_Interaction$yhatfdobj)
+plot(f_Interaction$betaestlist$const)
+#plot(f_Interaction$betaestlist$Tin) # only run if Tin is a continuous variable
+plot(f_Interaction$betaestlist$Tin.328) 
+plot(f_Interaction$betaestlist$Tin.329)
+plot(f_Interaction$betaestlist$Tin.330)
+
+
+
+```
+
+$y_hat = B0+B.328*0.5+B.329*0.5$
+
+
+```{r evaluating coefs & in between coefs}
+
+coefs.df <- data.frame(B0 = eval.fd(1:150, f_Interaction$betaestlist$const$fd),
+                       B1.328 = eval.fd(1:150, f_Interaction$betaestlist$Tin.328$fd),
+                       B1.329 = eval.fd(1:150, f_Interaction$betaestlist$Tin.329$fd)) %>%
+  mutate(y_hat328 = B0 + B1.328,
+         y_hat329 = B0 + B1.329,
+         y_hat328.5 = B0 + 0.5*B1.328 + 0.5*B1.329)
+
+## run for continuous model
+# coefs.df_cont <- data.frame(B0=eval.fd(1:150, f_Interaction$betaestlist$const$fd),
+#                             B1 = eval.fd(1:150, f_Interaction$betaestlist$Tin$fd))
+
+
+par(mfrow=c(1,1))
+plot(1:150,coefs.df$y_hat328, type = "l", ylim=c(0,1.2)):grid()
+lines(1:150,coefs.df$y_hat329, col = "blue")
+
+
+## factors
+s <- seq(0,1,by=0.1)
+est <- list()
+for(i in 1:length(s)){
+  est[[i]] <- coefs.df$B0 + coefs.df$B1.328*(1-s[i])+coefs.df$B1.329*s[i]
+  
+}
+lines(1:150, est[[6]], lwd=0.5)
+title(main="yHat for Tin 328 to 329 by 0.1")
+
+#continuous
+s <- seq(0,1,by=0.1)
+est_cont <- list()
+for(i in 1:length(s)){
+  est_cont[[i]] <- coefs.df_cont$B0 + coefs.df_cont$B1*(328+s[i])
+  #lines(1:150, est[[i]], lwd=0.5)
+}
+#title(main="yHat for Tin 328 to 329 by 0.1")
+
+```
+
+### Now, simulate Tin in seq(328,329,by=0.1) and compare to these yhats
+
+```{r compare yhats to simulated data}
+
+
+
+dataSmall <- "/mnt/DATA/Tin Variation/Tc290Tin328to329_by0.1.csv" %>% read.csv() 
+
+dataSmall$Replicate <- factor(dataSmall$Replicate, levels = unique(dataSmall$Replicate))
+unique(dataSmall$Replicate) %>% head()
+
+dataSmall$Tin_group <- str_split_fixed(dataSmall$Replicate, fixed("_"), n=3)[,1] %>% 
+  #factor() %>% 
+  #str_sub(2,-2) %>% 
+  as.numeric() #%>% 
+ # plyr::round_any(10)
+dataSmall$Tc_group <- str_split_fixed(dataSmall$Replicate, fixed("_"),n=3)[,2] %>% 
+  #factor() %>% 
+  #str_sub(2,-2) %>% 
+  as.numeric() #%>% 
+  #plyr::round_any(10)
+dataSmall <- dataSmall %>%
+  group_by(Replicate) %>%
+  mutate(time2 = row_number()#,
+         # Tin_norm = (Tin_group-mean(Tin_group))/sd(Tin_group),
+         # Tc_norm = (Tc_group-mean(Tc_group))/sd(Tc_group)
+         )
+
+head(dataSmall) 
+table(dataSmall$Tin_group, dataSmall$Tc_group)
+
+dataSmall %>% 
+  #filter(Tin_group %in% c(328,328.5,329)) %>%
+  ggplot(aes(x=time, y = concentrationA, group = Replicate, color = as.factor(Tin_group))) + 
+  geom_line() + xlim(0,10) +
+  ylim(0,1.2) +
+  ggtitle("Concentration of A from Simulations")#+ scale_y_continuous(trans="log10")
+
+
+
+
+```
+
+
+
+
+```{r factor vs continuous for presentation aug 4}
+### Factors #####
+lines <- data.frame(Time = 1:150, dataSmall %>%
+                      filter(Tin_group == 328 & time2 <= 150) %>%
+                      select(concentrationA), Y_hat = est[[1]]) %>%
+  select(!Replicate) %>%
+  pivot_longer(concentrationA:Y_hat, names_to = "Sim", values_to = "concentration")
+
+f328 <- lines %>% 
+  ggplot(aes(x=Time, y = concentration, col = Sim, group = Sim)) + 
+  geom_line() + 
+  ggtitle("comparing Y_hat to Simulation, Tin = 328 - perfect overlap") + 
+  ylim(0,1)
+
+lines <- data.frame(Time = 1:150, dataSmall %>%
+                      filter(Tin_group == 328.1 & time2 <= 150) %>%
+                      select(concentrationA), Y_hat = est[[2]]) %>%
+  select(!Replicate) %>%
+  pivot_longer(concentrationA:Y_hat, names_to = "Sim", values_to = "concentration")
+
+f328.5 <- lines %>% 
+  ggplot(aes(x=Time, y = concentration, col = Sim, group = Sim)) + 
+  geom_line() + 
+  ggtitle("comparing Y_hat to Simulation, Tin = 328.5") + 
+  ylim(0,1)
+
+lines <- data.frame(Time = 1:150, dataSmall %>%
+                      filter(Tin_group == 329 & time2 <= 150) %>%
+                      select(concentrationA), Y_hat = est[[11]]) %>%
+  select(!Replicate) %>%
+  pivot_longer(concentrationA:Y_hat, names_to = "Sim", values_to = "concentration")
+
+f329 <- lines %>% 
+  ggplot(aes(x=Time, y = concentration, col = Sim, group = Sim)) + 
+  geom_line() + 
+  ggtitle("comparing Y_hat to Simulation, Tin = 329") + 
+  ylim(0,1)
+
+
+grid.arrange(f328, f328.5, f329)
+
+
+
+### Continuous #####
+lines <- data.frame(Time = 1:150, dataSmall %>%
+                      filter(Tin_group == 328 & time2 <= 150) %>%
+                      select(concentrationA), Y_hat = est_cont[[1]]) %>%
+  select(!Replicate) %>%
+  pivot_longer(concentrationA:Y_hat, names_to = "Sim", values_to = "concentration")
+
+c328 <- lines %>% 
+  ggplot(aes(x=Time, y = concentration, col = Sim, group = Sim)) + 
+  geom_line() + 
+  ggtitle("comparing Y_hat to Simulation, Tin = 328") + 
+  ylim(0,1)
+
+lines <- data.frame(Time = 1:150, dataSmall %>%
+                      filter(Tin_group == 328.1 & time2 <= 150) %>%
+                      select(concentrationA), Y_hat = est_cont[[2]]) %>%
+  select(!Replicate) %>%
+  pivot_longer(concentrationA:Y_hat, names_to = "Sim", values_to = "concentration")
+
+c328.5 <- lines %>% 
+  ggplot(aes(x=Time, y = concentration, col = Sim, group = Sim)) + 
+  geom_line() + 
+  ggtitle("comparing Y_hat to Simulation, Tin = 328.5") + 
+  ylim(0,1)
+
+lines <- data.frame(Time = 1:150, dataSmall %>%
+                      filter(Tin_group == 329 & time2 <= 150) %>%
+                      select(concentrationA), Y_hat = est_cont[[11]]) %>%
+  select(!Replicate) %>%
+  pivot_longer(concentrationA:Y_hat, names_to = "Sim", values_to = "concentration")
+
+c329 <- lines %>% 
+  ggplot(aes(x=Time, y = concentration, col = Sim, group = Sim)) + 
+  geom_line() + 
+  ggtitle("comparing Y_hat to Simulation, Tin = 329") + 
+  ylim(0,1)
+
+
+grid.arrange(c328, c328.5, c329)
+
+```
+
+
