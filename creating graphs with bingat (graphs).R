@@ -1,0 +1,40 @@
+library(bingat)
+load(".RData")
+library(tidyverse)
+
+data(braingraphs)
+main <- "Brain Connections" 
+gc <- c(5, 5, 4, 6)
+gl <- c("Grp1", "Grp2", "Grp3", "Grp4")
+graphNetworkPlot(braingraphs[,1], "adjMatrix", main, groupCounts=gc, groupLabels=gl)
+
+
+
+graphNetworkPlot
+function (data, type, main = "Network Plot", labels, groupCounts,
+          groupLabels)
+{
+  if (missing(data) || missing(type))
+    stop("data and/or type is missing.")
+  if (missing(groupCounts)) {
+    myColors <- "red"
+  }
+  else {
+    allColors <- rainbow(length(groupCounts) + 1)
+    myColors <- NULL
+    for (i in 1:length(groupCounts)) myColors <- c(myColors,
+                                                   rep(allColors[i], groupCounts[i]))
+  }
+  if (class(data) == "data.frame" || class(data) == "matrix")
+    data <- data[, 1]
+  dataVec <- vec2mat(data, type)
+  graph <- network::network(as.matrix(dataVec), directed = FALSE)
+  if (!missing(labels))
+    network::network.vertex.names(graph) <- as.data.frame(labels)
+  network::plot.network(graph, mode = "circle", vertex.col = myColors,
+                        label = network::network.vertex.names(graph), main = main,
+                        edge.col = "black")
+  if (!missing(groupLabels))
+    legend("topright", legend = groupLabels, fill = allColors,
+           horiz = FALSE)
+}
